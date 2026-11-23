@@ -90,6 +90,42 @@ fn pick_icon_url(json_bytes: &[u8]) -> Option<String> {
     None
 }
 
+fn pick_best_game_ids(search_json: &serde_json::Value, game_name: &str) -> Vec<u64> {
+    let Some(items) = search_json.get("data").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    let target = game_name.trim();
+    let target_norm: String = target
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+
+    let mut ranked: Vec<(u8, u64)> = items
+        .iter()
+        .filter_map(|item| {
+            let id = item.get("id")?.as_u64()?;
+            let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("").trim();
+            let norm: String = name
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric())
+                .map(|c| c.to_ascii_lowercase())
+                .collect();
+            let rank = if name.eq_ignore_ascii_case(target) {
+                0
+            } else if !target_norm.is_empty() && norm == target_norm {
+                1
+            } else {
+                2
+            };
+            Some((rank, id))
+        })
+        .collect();
+
+    ranked.sort_by_key(|(rank, _)| *rank);
+    ranked.into_iter().map(|(_, id)| id).take(3).collect()
+}
+
 pub fn fetch_and_cache_game_icon(game_name: &str, api_key: &str) -> Option<PathBuf> {
     if !is_fetchable_game(game_name) {
         return None;
@@ -107,26 +143,41 @@ pub fn fetch_and_cache_game_icon(game_name: &str, api_key: &str) -> Option<PathB
     let search_url = format!("https://www.steamgriddb.com/api/v2/search/autocomplete/{encoded}");
     let search_bytes = curl_get_bytes(&search_url, Some(key), "8")?;
     let search_json: serde_json::Value = serde_json::from_slice(&search_bytes).ok()?;
-    let game_id = search_json
-        .get("data")?
-        .as_array()?
-        .first()?
-        .get("id")?
-        .as_u64()?;
+    let candidate_ids = pick_best_game_ids(&search_json, game_name);
 
-    let png_icons_url =
-        format!("https://www.steamgriddb.com/api/v2/icons/game/{game_id}?mimes=image/png&types=static");
-    let img_url = curl_get_bytes(&png_icons_url, Some(key), "8")
-        .and_then(|b| pick_icon_url(&b))
-        .or_else(|| {
-            let any_url =
-                format!("https://www.steamgriddb.com/api/v2/icons/game/{game_id}?types=static");
-            curl_get_bytes(&any_url, Some(key), "8").and_then(|b| pick_icon_url(&b))
-        })?;
+    let mut img_url = None;
+    for game_id in candidate_ids {
+        let png_icons_url =
+            format!("https://www.steamgriddb.com/api/v2/icons/game/{game_id}?mimes=image/png&types=static");
+        img_url = curl_get_bytes(&png_icons_url, Some(key), "8")
+            .and_then(|b| pick_icon_url(&b))
+            .or_else(|| {
+                let any_url =
+                    format!("https://www.steamgriddb.com/api/v2/icons/game/{game_id}?types=static");
+                curl_get_bytes(&any_url, Some(key), "8").and_then(|b| pick_icon_url(&b))
+            })
+            .or_else(|| {
+                let grid_url =
+                    format!("https://www.steamgriddb.com/api/v2/grids/game/{game_id}?dimensions=512x512,1024x1024&types=static");
+                curl_get_bytes(&grid_url, Some(key), "8").and_then(|b| pick_icon_url(&b))
+            });
+        if img_url.is_some() {
+            break;
+        }
+    }
+    let img_url = img_url?;
 
     let img_bytes = curl_get_bytes(&img_url, None, "10")?;
     let dyn_img = image::load_from_memory(&img_bytes).ok()?;
-    let resized = image::imageops::resize(&dyn_img.to_rgba8(), 64, 64, FilterType::Lanczos3);
+    let rgba = dyn_img.to_rgba8();
+    let (rw, rh) = rgba.dimensions();
+    let side = rw.min(rh);
+    let cropped = if rw != rh && side > 0 {
+        image::imageops::crop_imm(&rgba, (rw - side) / 2, (rh - side) / 2, side, side).to_image()
+    } else {
+        rgba
+    };
+    let resized = image::imageops::resize(&cropped, 64, 64, FilterType::CatmullRom);
 
     if let Some(parent) = cache_path.parent() {
         let _ = fs::create_dir_all(parent);
@@ -149,5 +200,13 @@ mod tests {
         assert!(!is_fetchable_game(""));
         let p = cache_path_for_game("Counter-Strike 2");
         assert!(p.to_string_lossy().ends_with("counter_strike_2.png"));
+
+        let sample = serde_json::json!({
+            "data": [
+                { "id": 5341559, "name": "Rob & Run" },
+                { "id": 5529636, "name": "ROB RUN" }
+            ]
+        });
+        assert_eq!(pick_best_game_ids(&sample, "ROB RUN"), vec![5529636, 5341559]);
     }
 }

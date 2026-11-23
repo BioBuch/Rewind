@@ -103,18 +103,18 @@ impl DiscordRpcClient {
 pub fn build_activity_strings(
     active_game: Option<&str>,
     replay_on: bool,
-    resolution_label: &str,
-    fps: u32,
+    _resolution_label: &str,
+    _fps: u32,
 ) -> (String, String) {
     let details = match (active_game, replay_on) {
-        (Some(game), _) => format!("Playing {game} with Rewind"),
-        (None, true) => "Clipping Desktop with Rewind".to_owned(),
+        (Some(game), _) => format!("Clipping {game}"),
+        (None, true) => "Clipping Desktop".to_owned(),
         (None, false) => "Idle · Ready to Clip".to_owned(),
     };
     let state = if replay_on {
-        format!("Instant Replay On · {resolution_label} {fps}fps")
+        "with Rewind".to_owned()
     } else {
-        "Instant Replay Paused".to_owned()
+        "with Rewind · Paused".to_owned()
     };
     (details, state)
 }
@@ -186,8 +186,8 @@ mod tests {
     #[test]
     fn encodes_discord_ipc_frame_and_activity_payload() {
         let (details, state) = build_activity_strings(Some("Fortnite"), true, "1080p", 120);
-        assert_eq!(details, "Playing Fortnite with Rewind");
-        assert_eq!(state, "Instant Replay On · 1080p 120fps");
+        assert_eq!(details, "Clipping Fortnite");
+        assert_eq!(state, "with Rewind");
 
         let json_str = build_set_activity_json(1234, 7, &details, &state, 1_700_000_000);
         let frame = encode_ipc_frame(1, json_str.as_bytes());
@@ -198,10 +198,7 @@ mod tests {
         );
         let parsed: Value = serde_json::from_slice(&frame[8..]).expect("valid json");
         assert_eq!(parsed["cmd"], "SET_ACTIVITY");
-        assert_eq!(
-            parsed["args"]["activity"]["details"],
-            "Playing Fortnite with Rewind"
-        );
+        assert_eq!(parsed["args"]["activity"]["details"], "Clipping Fortnite");
         assert_eq!(
             parsed["args"]["activity"]["buttons"][0]["label"],
             "Download Rewind"

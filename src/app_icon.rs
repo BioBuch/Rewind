@@ -146,6 +146,50 @@ fn hsl_to_rgb(h: f32, s: f32, l: f32) -> [u8; 3] {
     ]
 }
 
+fn resize_premultiplied(src: &RgbaImage, size: u32) -> Vec<u8> {
+    let mut premul = src.clone();
+    for px in premul.pixels_mut() {
+        let a = px[3] as f32 / 255.0;
+        px[0] = (px[0] as f32 * a).round() as u8;
+        px[1] = (px[1] as f32 * a).round() as u8;
+        px[2] = (px[2] as f32 * a).round() as u8;
+    }
+    let mut out = image::imageops::resize(&premul, size, size, FilterType::CatmullRom).into_raw();
+    for px in out.chunks_exact_mut(4) {
+        if px[3] > 0 && px[3] < 255 {
+            let a = px[3] as f32 / 255.0;
+            px[0] = (px[0] as f32 / a).clamp(0.0, 255.0).round() as u8;
+            px[1] = (px[1] as f32 / a).clamp(0.0, 255.0).round() as u8;
+            px[2] = (px[2] as f32 / a).clamp(0.0, 255.0).round() as u8;
+        }
+    }
+    out
+}
+
+fn apply_smooth_rounded_mask(rgba: &mut [u8], size: u32) {
+    let s = size as f32;
+    let center = (s - 1.0) * 0.5;
+    let half = s * (103.5 / 256.0);
+    let radius = s * (42.0 / 256.0);
+    let inner = half - radius;
+    let aa = (s / 256.0).max(0.75);
+
+    for y in 0..size {
+        let dy = ((y as f32 - center).abs() - inner).max(0.0);
+        for x in 0..size {
+            let dx = ((x as f32 - center).abs() - inner).max(0.0);
+            let dist = (dx * dx + dy * dy).sqrt() - radius;
+            let idx = ((y * size + x) * 4) as usize;
+            if dist >= aa {
+                rgba[idx + 3] = 0;
+            } else if dist > -aa {
+                let cov = ((aa - dist) / (2.0 * aa)).clamp(0.0, 1.0);
+                rgba[idx + 3] = ((rgba[idx + 3] as f32) * cov).round() as u8;
+            }
+        }
+    }
+}
+
 pub fn render_icon_rgba(target: Color32, size: u32) -> Vec<u8> {
     let size = size.max(1);
     let (target_h, target_sat) = rgb_to_hue_sat(target.r(), target.g(), target.b());
@@ -173,8 +217,9 @@ pub fn render_icon_rgba(target: Color32, size: u32) -> Vec<u8> {
     let mut rgba = if size == 256 {
         decode_256(base).as_raw().clone()
     } else {
-        image::imageops::resize(decode_256(base), size, size, FilterType::Lanczos3).into_raw()
+        resize_premultiplied(decode_256(base), size)
     };
+    apply_smooth_rounded_mask(&mut rgba, size);
 
     if delta_h.abs() < 3.0 && (sat_scale - 1.0).abs() < 0.01 {
         return rgba;

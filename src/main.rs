@@ -80,6 +80,10 @@ fn apply_dark_fluent_visuals(ctx: &egui::Context) {
 }
 
 fn main() -> eframe::Result<()> {
+    std::panic::set_hook(Box::new(|info| {
+        let log_path = rewind::config::AppConfig::app_data_dir().join("ui_panic.log");
+        let _ = std::fs::write(&log_path, format!("{info}\n"));
+    }));
     let cfg = rewind::config::AppConfig::load_from_dir(&rewind::config::AppConfig::app_data_dir());
     let init_accent = cfg.effective_accent_color();
     let icon_rgba = rewind::app_icon::render_icon_rgba(init_accent, 256);

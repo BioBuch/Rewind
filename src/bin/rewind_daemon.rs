@@ -213,6 +213,43 @@ fn spawn_ui_host() {
 }
 
 fn trigger_save_clip(core: &Arc<Mutex<DaemonCore>>) -> Result<String, String> {
+    let post_secs = {
+        let mut guard = core.lock().map_err(|_| "Mutex poisoned".to_owned())?;
+        let has_capture_source =
+            guard.active_game.is_some() || guard.manual_source.as_deref() == Some("Desktop");
+        if !has_capture_source {
+            return Err("No capture source active — launch a game or select Desktop.".to_owned());
+        }
+        let post_secs = if guard.config.replay_on {
+            guard.config.clip_post_buffer_secs.min(15)
+        } else {
+            0
+        };
+        if post_secs > 0 {
+            guard.clip_flash_counter += 1;
+            guard.push_event(format!("Capturing {post_secs}s post-clip..."));
+        }
+        post_secs
+    };
+
+    if post_secs > 0 {
+        play_clip_chime();
+        let core_bg = core.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_secs(post_secs as u64));
+            if let Err(err) = save_clip_immediate(&core_bg, false) {
+                if let Ok(mut g) = core_bg.lock() {
+                    g.push_event(format!("Save failed: {err}"));
+                }
+            }
+        });
+        return Ok(format!("Saving clip in {post_secs}s..."));
+    }
+
+    save_clip_immediate(core, true)
+}
+
+fn save_clip_immediate(core: &Arc<Mutex<DaemonCore>>, play_feedback: bool) -> Result<String, String> {
     let (mut packets, cfg, hw, game_name) = {
         let mut guard = core.lock().map_err(|_| "Mutex poisoned".to_owned())?;
         let has_capture_source =
@@ -220,7 +257,9 @@ fn trigger_save_clip(core: &Arc<Mutex<DaemonCore>>) -> Result<String, String> {
         if !has_capture_source {
             return Err("No capture source active — launch a game or select Desktop.".to_owned());
         }
-        guard.clip_flash_counter += 1;
+        if play_feedback {
+            guard.clip_flash_counter += 1;
+        }
         let packets = guard
             .ring_buffer
             .snapshot_from_nearest_idr(guard.config.clip_length.seconds());
@@ -238,7 +277,9 @@ fn trigger_save_clip(core: &Arc<Mutex<DaemonCore>>) -> Result<String, String> {
         )
     };
 
-    play_clip_chime();
+    if play_feedback {
+        play_clip_chime();
+    }
 
     if cfg.replay_on
         && !packets

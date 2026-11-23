@@ -25,7 +25,6 @@ pub enum UiIcon {
     Monitor,
     Codec,
     Bitrate,
-    BufferRam,
     Speaker,
     Mic,
     AudioTracks,
@@ -113,9 +112,9 @@ pub fn paint_empty_thumb_surface(painter: &Painter, rect: Rect, rounding: Roundi
 }
 
 pub fn paint_game_badge_initial(painter: &Painter, rect: Rect, game_name: &str, accent: Color32) {
-    let r = Rounding::same((rect.width() * 0.26).clamp(2.5, 5.0));
-    painter.rect_filled(rect, r, Color32::from_rgb(26, 34, 49));
-    painter.rect_stroke(rect, r, Stroke::new(1.0_f32, Color32::from_rgb(48, 60, 84)));
+    let rad = rect.width().min(rect.height()) * 0.5;
+    painter.circle_filled(rect.center(), rad, Color32::from_rgb(26, 34, 49));
+    painter.circle_stroke(rect.center(), rad, Stroke::new(1.0_f32, Color32::from_rgb(48, 60, 84)));
     let ch = game_name
         .chars()
         .find(|c| c.is_alphanumeric())
@@ -338,14 +337,6 @@ pub fn paint_icon(painter: &Painter, rect: Rect, icon: UiIcon, color: Color32) {
             ];
             painter.add(Shape::closed_line(pts, stroke));
         }
-        UiIcon::BufferRam => {
-            let r = Rect::from_center_size(c, Vec2::new(s * 1.45, s * 0.92));
-            painter.rect_stroke(r, Rounding::same(2.0), stroke);
-            for dx in [-0.36, 0.0, 0.36] {
-                let x = c.x + s * dx;
-                painter.line_segment([Pos2::new(x, r.top() + 2.5), Pos2::new(x, r.bottom() - 2.5)], stroke);
-            }
-        }
         UiIcon::Speaker => {
             let cone = vec![
                 Pos2::new(c.x - s * 0.65, c.y - s * 0.25),
@@ -500,8 +491,8 @@ pub fn paint_rounded_image(
         (rounding.sw.min(max_r), Pos2::new(rect.left() + rounding.sw.min(max_r), rect.bottom() - rounding.sw.min(max_r)), FRAC_PI_2, PI),
     ];
 
-    let mut perim: Vec<Pos2> = Vec::with_capacity(32);
-    let segs = 6_usize;
+    let mut perim: Vec<Pos2> = Vec::with_capacity(64);
+    let segs = 14_usize;
     for (r, center, a0, a1) in corners {
         if r <= 0.5 {
             perim.push(center);

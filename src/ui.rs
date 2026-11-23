@@ -3,8 +3,8 @@ use crate::art::{
     paint_rounded_image, UiIcon,
 };
 use crate::state::{
-    ActivePopup, FilterPill, NavTab, RebindTarget, RewindUiState, SortOrder, UpdateStatus,
-    ViewMode,
+    ActivePopup, FilterPill, NavTab, RebindTarget, RewindUiState, SettingsCategory, SortOrder,
+    UpdateStatus, ViewMode,
 };
 use egui::{
     Align, Color32, CursorIcon, FontId, Id, Key, Layout, Margin, Order, Pos2, Rect, Response,
@@ -12,8 +12,8 @@ use egui::{
     ViewportCommand,
 };
 use rewind::config::{
-    AccentColor, AppConfig, BufferMode, ClipLength, ContainerFormat, EncoderPreference, FrameRate,
-    RateControl, Resolution, VideoCodec,
+    AccentColor, AppConfig, ClipLength, ContainerFormat, EncoderPreference, FrameRate, RateControl,
+    Resolution, VideoCodec,
 };
 use rewind::game_detector::normalize_game_entry;
 use rewind::game_icons::STEAMGRIDDB_API_KEY_URL;
@@ -21,7 +21,8 @@ use rewind::ipc::IpcRequest;
 use rewind::library::ClipRecord;
 use rewind::updater::{open_url, CURRENT_VERSION, RELEASES_PAGE_URL};
 use rewind::win_ffi::{
-    pick_exe_file_dialog, pick_image_file_dialog, set_active_window_borderless_fullscreen,
+    copy_file_to_clipboard, pick_exe_file_dialog, pick_image_file_dialog,
+    set_active_window_borderless_fullscreen,
 };
 use std::f32::consts::{FRAC_PI_2, TAU};
 
@@ -174,6 +175,7 @@ pub fn render_app(ctx: &egui::Context, state: &mut RewindUiState) {
         && !state.allow_close_now
         && state.daemon_connected
         && state.snapshot.replay_on
+        && !state.snapshot.config.suppress_recording_close_prompt
     {
         ctx.send_viewport_cmd(ViewportCommand::CancelClose);
         state.show_close_recording_notice = true;
@@ -338,28 +340,38 @@ fn smooth_bounce_scroll(ui: &mut Ui, id_source: &str, add_contents: impl FnOnce(
     let dt = ((now - s.last_time) as f32).clamp(0.001, 0.05);
     s.last_time = now;
 
-    let wheel_y = if hovered {
-        ui.input(|i| i.smooth_scroll_delta.y)
+    let not_dragging_widget = ui.ctx().dragged_id().is_none();
+    let (wheel_y, drag_y, pointer_down) = if hovered {
+        ui.input(|i| {
+            let down = i.pointer.primary_down() && not_dragging_widget;
+            let dy = if down { i.pointer.delta().y } else { 0.0 };
+            (i.smooth_scroll_delta.y, dy, down)
+        })
     } else {
-        0.0
+        (0.0, 0.0, false)
     };
-    if wheel_y.abs() > 0.01 {
-        ui.ctx().input_mut(|i| i.smooth_scroll_delta.y = 0.0);
-        s.target_y -= wheel_y * 1.15;
+    let scroll_delta = wheel_y * 1.15 + drag_y;
+    if scroll_delta.abs() > 0.01 {
+        if wheel_y.abs() > 0.01 {
+            ui.ctx().input_mut(|i| i.smooth_scroll_delta.y = 0.0);
+        }
+        s.target_y -= scroll_delta;
         if s.target_y < 0.0 {
             let excess = -s.target_y;
             s.target_y = 0.0;
-            s.overscroll = (s.overscroll + excess * 0.36).min(56.0);
+            s.overscroll = (s.overscroll + excess * 0.42).min(56.0);
         } else if s.target_y > s.last_max_y {
             let excess = s.target_y - s.last_max_y;
             s.target_y = s.last_max_y;
-            s.overscroll = (s.overscroll - excess * 0.36).max(-56.0);
+            s.overscroll = (s.overscroll - excess * 0.42).max(-56.0);
         }
     }
 
     let k = 1.0 - (-16.0 * dt).exp();
     s.current_y += (s.target_y - s.current_y) * k;
-    s.overscroll *= (-11.0 * dt).exp();
+    if !pointer_down {
+        s.overscroll *= (-11.0 * dt).exp();
+    }
     if s.overscroll.abs() < 0.05 {
         s.overscroll = 0.0;
     }
@@ -367,16 +379,19 @@ fn smooth_bounce_scroll(ui: &mut Ui, id_source: &str, add_contents: impl FnOnce(
     let scroll_offset = s.current_y.clamp(0.0, s.last_max_y) + (-s.overscroll).max(0.0);
     let out = egui::ScrollArea::vertical()
         .id_salt(id_source)
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
         .auto_shrink([false, false])
         .vertical_scroll_offset(scroll_offset)
         .show(ui, |ui| {
-            if s.overscroll > 0.2 {
-                ui.add_space(s.overscroll);
-            }
-            add_contents(ui);
-            if s.overscroll < -0.2 {
-                ui.add_space(-s.overscroll);
-            }
+            ui.vertical(|ui| {
+                if s.overscroll > 0.2 {
+                    ui.add_space(s.overscroll);
+                }
+                add_contents(ui);
+                if s.overscroll < -0.2 {
+                    ui.add_space(-s.overscroll);
+                }
+            });
         });
 
     let max_y = (out.content_size.y - out.inner_rect.height() - s.overscroll.abs()).max(0.0);
@@ -654,7 +669,10 @@ fn render_top_bar(
 
                     let close_resp = window_ctrl_button(ui, UiIcon::Close, true);
                     if close_resp.clicked() {
-                        if state.daemon_connected && state.snapshot.replay_on {
+                        if state.daemon_connected
+                            && state.snapshot.replay_on
+                            && !state.snapshot.config.suppress_recording_close_prompt
+                        {
                             state.show_close_recording_notice = true;
                         } else {
                             state.allow_close_now = true;
@@ -1376,8 +1394,14 @@ fn render_filter_bar(ui: &mut Ui, state: &mut RewindUiState, pop: &mut PopoverLa
         for (pill, label, is_star, is_game) in pills {
             let active = state.filter_pill == pill;
             let text_w = label.len() as f32 * 6.4;
-            let extra = if is_game || is_star { 20.0 } else { 0.0 };
-            let w = (text_w + extra + 22.0).min(150.0);
+            let extra = if is_game {
+                23.0
+            } else if is_star {
+                20.0
+            } else {
+                0.0
+            };
+            let w = (text_w + extra + 22.0).min(156.0);
 
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 28.0), Sense::click());
             let bg = if active {
@@ -1403,10 +1427,10 @@ fn render_filter_bar(ui: &mut Ui, state: &mut RewindUiState, pop: &mut PopoverLa
             } else if is_game {
                 let g_rect = Rect::from_center_size(
                     Pos2::new(rect.left() + 16.0, rect.center().y),
-                    Vec2::splat(14.0),
+                    Vec2::splat(17.0),
                 );
                 paint_game_badge(ui, state, g_rect, &label, accent.color());
-                text_x = rect.left() + 27.0;
+                text_x = rect.left() + 29.0;
             }
 
             let text_col = if active { accent.color() } else { TEXT_MUTED };
@@ -1706,14 +1730,46 @@ fn render_clips_collection(ui: &mut Ui, state: &mut RewindUiState, now_secs: f64
                     );
                 }
 
-                let title = truncate_text(&clip.title, ((card_w - 24.0) / 6.8) as usize);
-                ui.painter().text(
-                    Pos2::new(footer_rect.left() + 12.0, footer_rect.top() + 18.0),
-                    egui::Align2::LEFT_CENTER,
+                let title = truncate_text(&clip.title, ((card_w - 36.0) / 6.8) as usize);
+                let title_galley = ui.painter().layout_no_wrap(
                     title,
                     FontId::proportional(12.5),
                     TEXT_PRIMARY,
                 );
+                let title_w = (title_galley.size().x + 26.0).min(card_w - 16.0);
+                let title_r = Rect::from_min_size(
+                    Pos2::new(footer_rect.left() + 8.0, footer_rect.top() + 7.0),
+                    Vec2::new(title_w, 22.0),
+                );
+                let title_resp = ui.interact(title_r, Id::new(("clip_title", clip.id)), Sense::click());
+                let title_hov = title_resp.hovered();
+                if title_hov {
+                    ui.painter().rect_filled(
+                        title_r,
+                        Rounding::same(5.0),
+                        Color32::from_rgba_unmultiplied(255, 255, 255, 16),
+                    );
+                    ui.painter().rect_stroke(
+                        title_r,
+                        Rounding::same(5.0),
+                        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 26)),
+                    );
+                }
+                ui.painter().galley(
+                    Pos2::new(
+                        title_r.left() + 4.0,
+                        title_r.center().y - title_galley.size().y * 0.5,
+                    ),
+                    title_galley,
+                    TEXT_PRIMARY,
+                );
+                if title_hov {
+                    let pen_r = Rect::from_center_size(
+                        Pos2::new(title_r.right() - 10.0, title_r.center().y),
+                        Vec2::splat(11.0),
+                    );
+                    paint_icon(ui.painter(), pen_r, UiIcon::Edit, TEXT_PRIMARY);
+                }
 
                 let mini_r = Rect::from_min_size(
                     Pos2::new(footer_rect.left() + 12.0, footer_rect.top() + 33.0),
@@ -1746,6 +1802,13 @@ fn render_clips_collection(ui: &mut Ui, state: &mut RewindUiState, now_secs: f64
 
                 if star_resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
                     state.send_sync(IpcRequest::ToggleFavorite { id: clip.id }, now_secs);
+                } else if title_resp
+                    .on_hover_text("Click to rename")
+                    .on_hover_cursor(CursorIcon::PointingHand)
+                    .clicked()
+                {
+                    state.rename_modal_clip = Some((clip.id, clip.title.clone()));
+                    state.rename_modal_just_opened = true;
                 } else if card_resp.secondary_clicked() {
                     if let Some(pos) = ui.ctx().pointer_interact_pos() {
                         state.clip_context_menu = Some((clip.id, pos));
@@ -1770,28 +1833,168 @@ fn render_settings(
     let accent = ThemeAccent::from_config(&state.snapshot.config);
     let hw = state.snapshot.hardware.clone();
 
-    smooth_bounce_scroll(ui, "settings_scroll", |ui| {
-            let max_w = 740.0_f32.min(ui.available_width());
-            let side_pad = ((ui.available_width() - max_w) * 0.5).max(0.0);
+    let query = state.settings_search.trim().to_ascii_lowercase();
+    let active_cat = state.settings_category;
+    let show_cat = |cat: SettingsCategory, keywords: &str| {
+        if query.is_empty() {
+            active_cat == cat
+        } else {
+            cat.label().to_ascii_lowercase().contains(&query) || keywords.contains(&query)
+        }
+    };
 
-            ui.horizontal(|ui| {
-                ui.add_space(side_pad);
-                ui.vertical(|ui| {
-                    ui.set_max_width(max_w);
+    let full_h = ui.available_height();
+    ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing.x = 16.0;
 
-                    ui.label(RichText::new("Settings").size(20.0).strong().color(TEXT_PRIMARY));
-                    ui.add_space(2.0);
-                    ui.label(
-                        RichText::new(format!(
-                            "Detected GPU: {} ({} • {} MB VRAM)  |  Daemon RAM: {:.1} MB",
-                            hw.gpu_name, hw.encoder_backend, hw.vram_mb, state.snapshot.daemon_ram_mb
-                        ))
-                        .size(12.0)
-                        .color(TEXT_MUTED),
+        ui.allocate_ui_with_layout(
+            Vec2::new(224.0, full_h),
+            Layout::top_down(Align::Min),
+            |ui| {
+                ui.set_min_height(full_h);
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(4.0);
+                    let (icon_r, _) = ui.allocate_exact_size(Vec2::splat(34.0), Sense::hover());
+                    if let Some(tex) = &state.app_icon_texture {
+                        ui.painter().image(
+                            tex.id(),
+                            icon_r,
+                            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                            Color32::WHITE,
+                        );
+                    }
+                    ui.add_space(8.0);
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 1.0;
+                        ui.label(RichText::new("Rewind").size(13.5).strong().color(TEXT_PRIMARY));
+                        ui.label(
+                            RichText::new(format!(
+                                "v{CURRENT_VERSION} • {:.0} MB",
+                                state.snapshot.daemon_ram_mb
+                            ))
+                            .size(11.0)
+                            .color(TEXT_MUTED),
+                        );
+                    });
+                });
+
+                ui.add_space(12.0);
+
+                egui::Frame::none()
+                    .fill(Color32::from_rgba_unmultiplied(30, 34, 44, 210))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 22)))
+                    .rounding(Rounding::same(6.0))
+                    .inner_margin(Margin::symmetric(10.0, 5.0))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            let (sr, _) = ui.allocate_exact_size(Vec2::splat(13.0), Sense::hover());
+                            paint_icon(ui.painter(), sr, UiIcon::Search, TEXT_MUTED);
+                            ui.add_space(4.0);
+                            ui.add(
+                                TextEdit::singleline(&mut state.settings_search)
+                                    .desired_width(166.0)
+                                    .frame(false)
+                                    .hint_text("Find a setting")
+                                    .font(FontId::proportional(12.5)),
+                            );
+                        });
+                    });
+
+                ui.add_space(10.0);
+
+                for cat in SettingsCategory::ALL {
+                    let active = query.is_empty() && state.settings_category == cat;
+                    let (row_r, resp) =
+                        ui.allocate_exact_size(Vec2::new(224.0, 34.0), Sense::click());
+                    let bg = if active {
+                        Color32::from_rgba_unmultiplied(255, 255, 255, 18)
+                    } else if resp.hovered() {
+                        Color32::from_rgba_unmultiplied(255, 255, 255, 10)
+                    } else {
+                        Color32::TRANSPARENT
+                    };
+                    if bg != Color32::TRANSPARENT {
+                        ui.painter().rect_filled(row_r, Rounding::same(6.0), bg);
+                    }
+                    if active {
+                        let pill = Rect::from_min_size(
+                            Pos2::new(row_r.left() + 2.0, row_r.center().y - 8.0),
+                            Vec2::new(3.0, 16.0),
+                        );
+                        ui.painter().rect_filled(pill, Rounding::same(1.5), accent.color());
+                    }
+                    let cat_icon = match cat {
+                        SettingsCategory::Capture => UiIcon::Monitor,
+                        SettingsCategory::Clipping => UiIcon::Clock,
+                        SettingsCategory::Audio => UiIcon::Speaker,
+                        SettingsCategory::Hotkeys => UiIcon::Clock,
+                        SettingsCategory::Games => UiIcon::Grid,
+                        SettingsCategory::Storage => UiIcon::Folder,
+                        SettingsCategory::Personalization => UiIcon::Palette,
+                        SettingsCategory::Discord => UiIcon::Codec,
+                        SettingsCategory::System => UiIcon::Gear,
+                        SettingsCategory::Updates => UiIcon::Bell,
+                    };
+                    let ic_r = Rect::from_center_size(
+                        Pos2::new(row_r.left() + 20.0, row_r.center().y),
+                        Vec2::splat(15.0),
                     );
-                    ui.add_space(18.0);
+                    let ic_col = if active { accent.color() } else { TEXT_MUTED };
+                    paint_icon(ui.painter(), ic_r, cat_icon, ic_col);
+                    ui.painter().text(
+                        Pos2::new(row_r.left() + 38.0, row_r.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        cat.label(),
+                        FontId::proportional(13.0),
+                        if active { TEXT_PRIMARY } else { TEXT_MUTED },
+                    );
+                    if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
+                        state.settings_category = cat;
+                        state.settings_search.clear();
+                    }
+                }
+            },
+        );
 
-                    settings_section_header(ui, "Capture & Quality", None);
+        ui.allocate_ui_with_layout(
+            Vec2::new(ui.available_width(), full_h),
+            Layout::top_down(Align::Min),
+            |ui| {
+                ui.set_min_height(full_h);
+                smooth_bounce_scroll(ui, "settings_scroll", |ui| {
+            let max_w = 740.0_f32.min(ui.available_width());
+            ui.vertical(|ui| {
+                ui.set_max_width(max_w);
+                ui.add_space(4.0);
+
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    ui.label(RichText::new("Settings").size(22.0).strong().color(TEXT_MUTED));
+                    ui.label(RichText::new(">").size(18.0).color(TEXT_DIM));
+                    let page_title = if query.is_empty() {
+                        state.settings_category.label().to_owned()
+                    } else {
+                        format!("Search: \"{}\"", state.settings_search.trim())
+                    };
+                    ui.label(RichText::new(page_title).size(22.0).strong().color(TEXT_PRIMARY));
+                });
+                ui.add_space(2.0);
+                ui.label(
+                    RichText::new(format!(
+                        "{} ({} • {} MB VRAM)  •  Daemon RAM: {:.1} MB",
+                        hw.gpu_name, hw.encoder_backend, hw.vram_mb, state.snapshot.daemon_ram_mb
+                    ))
+                    .size(12.0)
+                    .color(TEXT_MUTED),
+                );
+                ui.add_space(16.0);
+
+                if show_cat(
+                    SettingsCategory::Clipping,
+                    "clip length post clip tail replay buffer duration",
+                ) {
+                    settings_section_header(ui, "Clipping", None);
                     settings_card(ui, |ui| {
                         settings_row(
                             ui,
@@ -1820,6 +2023,84 @@ fn render_settings(
 
                         settings_divider(ui);
 
+                        settings_row(
+                            ui,
+                            UiIcon::Clock,
+                            TEXT_MUTED,
+                            "Post-Clip Tail",
+                            "Keep recording 5–15 seconds after pressing the clip hotkey",
+                            |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 6.0;
+                                    for (secs, label) in [
+                                        (15_u32, "15s"),
+                                        (10, "10s"),
+                                        (5, "5s"),
+                                        (0, "Instant"),
+                                    ] {
+                                        let active =
+                                            state.snapshot.config.clip_post_buffer_secs == secs;
+                                        let fill = if active {
+                                            accent.color()
+                                        } else {
+                                            Color32::from_rgba_unmultiplied(30, 35, 46, 220)
+                                        };
+                                        let txt_col = if active {
+                                            Color32::WHITE
+                                        } else {
+                                            TEXT_MUTED
+                                        };
+                                        let (r, resp) = ui.allocate_exact_size(
+                                            Vec2::new(if secs == 0 { 58.0 } else { 40.0 }, 24.0),
+                                            Sense::click(),
+                                        );
+                                        ui.painter().rect_filled(r, Rounding::same(6.0), fill);
+                                        ui.painter().text(
+                                            r.center(),
+                                            egui::Align2::CENTER_CENTER,
+                                            label,
+                                            FontId::proportional(11.5),
+                                            txt_col,
+                                        );
+                                        if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
+                                            state.snapshot.config.clip_post_buffer_secs = secs;
+                                            cfg_changed = true;
+                                        }
+                                    }
+                                });
+                            },
+                        );
+
+                        settings_divider(ui);
+
+                        settings_row(
+                            ui,
+                            UiIcon::Monitor,
+                            accent.color(),
+                            "Auto-Start Screen Capture on Launch",
+                            "Automatically start desktop capture when Rewind starts (otherwise waits for a game or Desktop)",
+                            |ui| {
+                                if toggle_switch(
+                                    ui,
+                                    "autostart_cap_switch",
+                                    &mut state.snapshot.config.auto_start_capture,
+                                    accent.color(),
+                                ) {
+                                    cfg_changed = true;
+                                }
+                            },
+                        );
+                    });
+
+                    ui.add_space(18.0);
+                }
+
+                if show_cat(
+                    SettingsCategory::Capture,
+                    "resolution fps codec hevc av1 h264 bitrate cqp gop container encoder",
+                ) {
+                    settings_section_header(ui, "Capture & Quality", None);
+                    settings_card(ui, |ui| {
                         settings_row(
                             ui,
                             UiIcon::Monitor,
@@ -1965,185 +2246,108 @@ fn render_settings(
 
                         let est_mb = state.snapshot.config.estimated_clip_mb();
                         let rc = state.snapshot.config.rate_control;
-                        let right_lbl = match rc {
-                            RateControl::Cqp => format!("CQP {}", state.snapshot.config.cqp_qp),
-                            RateControl::Cbr => format!("{} Mbps", state.snapshot.config.bitrate_mbps),
-                        };
-                        settings_row(
-                            ui,
-                            UiIcon::Bitrate,
-                            TEXT_MUTED,
-                            if rc == RateControl::Cqp { "CQP Quality Target" } else { "Video Bitrate" },
-                            if rc == RateControl::Cqp {
-                                "Lower QP means higher visual fidelity (~18–20 recommended)"
-                            } else {
-                                "Constant target bitrate for CBR streams"
-                            },
-                            |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 8.0;
-                                    ui.label(
-                                        RichText::new(right_lbl)
-                                            .size(12.5)
-                                            .strong()
-                                            .color(TEXT_PRIMARY),
-                                    );
-                                    let badge_txt = if rc == RateControl::Cqp {
-                                        format!("~{} MB (motion)", est_mb)
-                                    } else {
-                                        format!("~{} MB / clip", est_mb)
-                                    };
-                                    let (b_rect, b_resp) = ui.allocate_exact_size(
-                                        Vec2::new(if rc == RateControl::Cqp { 112.0 } else { 88.0 }, 22.0),
-                                        Sense::hover(),
-                                    );
-                                    ui.painter()
-                                        .rect_filled(b_rect, Rounding::same(5.0), accent.soft_bg());
-                                    ui.painter().rect_stroke(
-                                        b_rect,
-                                        Rounding::same(5.0),
-                                        Stroke::new(1.0_f32, accent.color()),
-                                    );
-                                    ui.painter().text(
-                                        b_rect.center(),
-                                        egui::Align2::CENTER_CENTER,
-                                        badge_txt,
-                                        FontId::proportional(11.0),
-                                        accent.color(),
-                                    );
-                                    if rc == RateControl::Cqp {
-                                        let _ = b_resp.on_hover_text(
-                                            "Estimated for active game motion. Static desktop scenes compress much smaller under CQP.",
-                                        );
-                                    }
-                                });
-                            },
+                        let anim_t = ui.ctx().animate_bool_with_time(
+                            Id::new("rate_ctrl_cbr_anim"),
+                            rc == RateControl::Cbr,
+                            0.22,
                         );
-                        ui.add_space(6.0);
-                        match rc {
-                            RateControl::Cqp => {
-                                let mut qp = state.snapshot.config.cqp_qp as f32;
-                                if custom_slider(ui, "cqp_slider", &mut qp, 14.0, 28.0, accent.color()) {
-                                    state.snapshot.config.cqp_qp = qp.round() as u32;
-                                    cfg_changed = true;
-                                }
-                                ui.add_space(6.0);
-                                settings_divider(ui);
-                                render_disabled_rate_row(
-                                    ui,
-                                    "Video Bitrate (CBR)",
-                                    "Disabled while CQP rate control is active",
-                                    &format!("{} Mbps  •  Disabled", state.snapshot.config.bitrate_mbps),
-                                );
+                        let show_cbr = anim_t >= 0.5;
+                        let alpha = if show_cbr {
+                            (anim_t - 0.5) * 2.0
+                        } else {
+                            (0.5 - anim_t) * 2.0
+                        }
+                        .clamp(0.0, 1.0);
+                        let slide_y = (1.0 - alpha) * 8.0;
+                        let right_lbl = if show_cbr {
+                            format!("{} Mbps", state.snapshot.config.bitrate_mbps)
+                        } else {
+                            format!("CQP {}", state.snapshot.config.cqp_qp)
+                        };
+
+                        ui.scope(|ui| {
+                            ui.multiply_opacity(alpha);
+                            if slide_y > 0.1 {
+                                ui.add_space(slide_y);
                             }
-                            RateControl::Cbr => {
+                            settings_row(
+                                ui,
+                                UiIcon::Bitrate,
+                                TEXT_MUTED,
+                                if show_cbr { "Video Bitrate (CBR)" } else { "CQP Quality Target" },
+                                if show_cbr {
+                                    "Constant target bitrate for CBR streams"
+                                } else {
+                                    "Lower QP means higher visual fidelity (~18–20 recommended)"
+                                },
+                                |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 8.0;
+                                        ui.label(
+                                            RichText::new(right_lbl)
+                                                .size(12.5)
+                                                .strong()
+                                                .color(TEXT_PRIMARY),
+                                        );
+                                        let badge_txt = if show_cbr {
+                                            format!("~{} MB / clip", est_mb)
+                                        } else {
+                                            format!("~{} MB (motion)", est_mb)
+                                        };
+                                        let (b_rect, b_resp) = ui.allocate_exact_size(
+                                            Vec2::new(if show_cbr { 88.0 } else { 112.0 }, 22.0),
+                                            Sense::hover(),
+                                        );
+                                        ui.painter().rect_filled(
+                                            b_rect,
+                                            Rounding::same(5.0),
+                                            accent.soft_bg(),
+                                        );
+                                        ui.painter().rect_stroke(
+                                            b_rect,
+                                            Rounding::same(5.0),
+                                            Stroke::new(1.0_f32, accent.color()),
+                                        );
+                                        ui.painter().text(
+                                            b_rect.center(),
+                                            egui::Align2::CENTER_CENTER,
+                                            badge_txt,
+                                            FontId::proportional(11.0),
+                                            accent.color(),
+                                        );
+                                        if !show_cbr {
+                                            let _ = b_resp.on_hover_text(
+                                                "Estimated for active game motion. Static desktop scenes compress much smaller under CQP.",
+                                            );
+                                        }
+                                    });
+                                },
+                            );
+                            ui.add_space(6.0);
+                            if show_cbr {
                                 let mut br = state.snapshot.config.bitrate_mbps as f32;
                                 if custom_slider(ui, "bitrate_slider", &mut br, 10.0, 80.0, accent.color()) {
                                     state.snapshot.config.bitrate_mbps = br.round() as u32;
                                     cfg_changed = true;
                                 }
-                                ui.add_space(6.0);
-                                settings_divider(ui);
-                                render_disabled_rate_row(
-                                    ui,
-                                    "CQP Quality Target",
-                                    "Disabled while CBR bitrate mode is active",
-                                    &format!("CQP {}  •  Disabled", state.snapshot.config.cqp_qp),
-                                );
+                            } else {
+                                let mut qp = state.snapshot.config.cqp_qp as f32;
+                                if custom_slider(ui, "cqp_slider", &mut qp, 14.0, 28.0, accent.color()) {
+                                    state.snapshot.config.cqp_qp = qp.round() as u32;
+                                    cfg_changed = true;
+                                }
                             }
-                        }
+                        });
                         ui.add_space(6.0);
-
-                        settings_divider(ui);
-
-                        settings_row(
-                            ui,
-                            UiIcon::BufferRam,
-                            TEXT_MUTED,
-                            "Buffer Mode",
-                            "System RAM eliminates continuous SSD wear (Local Disk locked)",
-                            |ui| {
-                                let (seg_r, _) =
-                                    ui.allocate_exact_size(Vec2::new(178.0, 30.0), Sense::hover());
-                                ui.painter().rect_filled(
-                                    seg_r,
-                                    Rounding::same(7.0),
-                                    bar_bg(),
-                                );
-                                ui.painter().rect_stroke(
-                                    seg_r,
-                                    Rounding::same(7.0),
-                                    Stroke::new(1.0_f32, border_col()),
-                                );
-
-                                let ram_r = Rect::from_min_max(
-                                    seg_r.left_top() + Vec2::splat(2.0),
-                                    Pos2::new(seg_r.center().x - 1.0, seg_r.bottom() - 2.0),
-                                );
-                                let disk_r = Rect::from_min_max(
-                                    Pos2::new(seg_r.center().x + 1.0, seg_r.top() + 2.0),
-                                    seg_r.right_bottom() - Vec2::splat(2.0),
-                                );
-                                let ram_resp = ui.interact(ram_r, Id::new("buf_ram"), Sense::click());
-                                let disk_resp = ui.interact(disk_r, Id::new("buf_disk"), Sense::hover());
-
-                                ui.painter()
-                                    .rect_filled(ram_r, Rounding::same(5.0), accent.soft_bg());
-                                ui.painter().rect_stroke(
-                                    ram_r,
-                                    Rounding::same(5.0),
-                                    Stroke::new(1.0_f32, accent.color()),
-                                );
-                                ui.painter().rect_filled(
-                                    disk_r,
-                                    Rounding::same(5.0),
-                                    Color32::from_rgb(16, 20, 28),
-                                );
-                                ui.painter().text(
-                                    ram_r.center(),
-                                    egui::Align2::CENTER_CENTER,
-                                    "System RAM",
-                                    FontId::proportional(11.5),
-                                    accent.color(),
-                                );
-                                ui.painter().text(
-                                    disk_r.center(),
-                                    egui::Align2::CENTER_CENTER,
-                                    "Local Disk",
-                                    FontId::proportional(11.5),
-                                    TEXT_DIM,
-                                );
-                                if ram_resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
-                                    state.snapshot.config.buffer_mode = BufferMode::SystemRam;
-                                    cfg_changed = true;
-                                }
-                                disk_resp.on_hover_text("Disabled to prevent continuous SSD wear");
-                            },
-                        );
-
-                        settings_divider(ui);
-
-                        settings_row(
-                            ui,
-                            UiIcon::Monitor,
-                            accent.color(),
-                            "Auto-Start Screen Capture on Launch",
-                            "Automatically start desktop capture when Rewind starts (otherwise waits for a game or Desktop)",
-                            |ui| {
-                                if toggle_switch(
-                                    ui,
-                                    "autostart_cap_switch",
-                                    &mut state.snapshot.config.auto_start_capture,
-                                    accent.color(),
-                                ) {
-                                    cfg_changed = true;
-                                }
-                            },
-                        );
                     });
 
                     ui.add_space(18.0);
+                }
 
+                if show_cat(
+                    SettingsCategory::System,
+                    "startup windows auto capture replay close tray onboarding tour",
+                ) {
                     settings_section_header(ui, "System & Startup", None);
                     settings_card(ui, |ui| {
                         settings_row(
@@ -2225,7 +2429,12 @@ fn render_settings(
                     });
 
                     ui.add_space(18.0);
+                }
 
+                if show_cat(
+                    SettingsCategory::Discord,
+                    "discord rich presence activity status profile",
+                ) {
                     settings_section_header(ui, "Discord Rich Presence", None);
                     settings_card(ui, |ui| {
                         settings_row(
@@ -2248,7 +2457,12 @@ fn render_settings(
                     });
 
                     ui.add_space(18.0);
+                }
 
+                if show_cat(
+                    SettingsCategory::Games,
+                    "game detection custom ignored exe executable",
+                ) {
                     settings_section_header(
                         ui,
                         "Game Detection",
@@ -2345,7 +2559,12 @@ fn render_settings(
                     });
 
                     ui.add_space(18.0);
+                }
 
+                if show_cat(
+                    SettingsCategory::Audio,
+                    "audio speaker microphone mic volume tracks device",
+                ) {
                     settings_section_header(ui, "Audio", None);
                     settings_card(ui, |ui| {
                         let out_dev = state.snapshot.config.game_audio_device.clone();
@@ -2454,7 +2673,12 @@ fn render_settings(
                     });
 
                     ui.add_space(18.0);
+                }
 
+                if show_cat(
+                    SettingsCategory::Hotkeys,
+                    "hotkeys keybind save clip mic toggle bookmark",
+                ) {
                     settings_section_header(
                         ui,
                         "Hotkeys",
@@ -2493,7 +2717,12 @@ fn render_settings(
                     });
 
                     ui.add_space(18.0);
+                }
 
+                if show_cat(
+                    SettingsCategory::Storage,
+                    "storage clips folder disk quota delete",
+                ) {
                     settings_section_header(ui, "Storage", None);
                     settings_card(ui, |ui| {
                         let clips_dir = state.snapshot.config.clips_folder.clone();
@@ -2593,7 +2822,12 @@ fn render_settings(
                     });
 
                     ui.add_space(18.0);
+                }
 
+                if show_cat(
+                    SettingsCategory::Personalization,
+                    "personalization theme accent color background blur brightness steamgriddb",
+                ) {
                     settings_section_header(ui, "Personalization", None);
                     settings_card(ui, |ui| {
                         let bg_path = state.snapshot.config.background_image_path.clone();
@@ -2748,65 +2982,59 @@ fn render_settings(
                             },
                         );
 
-                        settings_divider(ui);
-
-                        let palette_locked = state.snapshot.config.auto_adjust_palette
-                            && !state.snapshot.config.background_image_path.is_empty();
-                        settings_row(
-                            ui,
-                            UiIcon::Palette,
-                            if palette_locked { TEXT_DIM } else { accent.color() },
-                            "Windows 11 Accent Color",
-                            if palette_locked {
-                                "Controlled automatically by Auto-Adjust Palette"
-                            } else {
-                                "Themes active indicators, buttons, storage ring, and Mica glow"
-                            },
-                            |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 8.0;
-                                    for swatch in AccentColor::ALL {
-                                        let active = !palette_locked
-                                            && state.snapshot.config.custom_accent_rgb.is_none()
-                                            && state.snapshot.config.accent_color == swatch;
-                                        let (s_rect, s_resp) =
-                                            ui.allocate_exact_size(Vec2::splat(26.0), if palette_locked { Sense::hover() } else { Sense::click() });
-                                        let c = swatch.color();
-                                        let draw_col = if palette_locked {
-                                            Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 85)
-                                        } else {
-                                            c
-                                        };
-                                        if active {
-                                            ui.painter().circle_stroke(
-                                                s_rect.center(),
-                                                12.5,
-                                                Stroke::new(1.8_f32, Color32::WHITE),
-                                            );
-                                        }
-                                        ui.painter().circle_filled(s_rect.center(), 9.5, draw_col);
-                                        if !palette_locked
-                                            && s_resp.on_hover_cursor(CursorIcon::PointingHand).clicked()
-                                        {
-                                            state.snapshot.config.accent_color = swatch;
-                                            state.snapshot.config.custom_accent_rgb = None;
-                                            cfg_changed = true;
-                                        }
-                                    }
-                                    if !palette_locked {
-                                        let mut rgb = [
-                                            accent.color().r(),
-                                            accent.color().g(),
-                                            accent.color().b(),
-                                        ];
-                                        if ui.color_edit_button_srgb(&mut rgb).changed() {
-                                            state.snapshot.config.custom_accent_rgb = Some(rgb);
-                                            cfg_changed = true;
-                                        }
-                                    }
-                                });
-                            },
+                        let show_accent = !state.snapshot.config.auto_adjust_palette;
+                        let accent_anim = ui.ctx().animate_bool_with_time(
+                            Id::new("accent_row_anim"),
+                            show_accent,
+                            0.18,
                         );
+                        if accent_anim > 0.01 {
+                            ui.scope(|ui| {
+                                ui.multiply_opacity(accent_anim);
+                                settings_divider(ui);
+
+                                settings_row(
+                                    ui,
+                                    UiIcon::Palette,
+                                    accent.color(),
+                                    "Windows 11 Accent Color",
+                                    "Themes active indicators, buttons, storage ring, and Mica glow",
+                                    |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 8.0;
+                                            for swatch in AccentColor::ALL {
+                                                let active = state.snapshot.config.custom_accent_rgb.is_none()
+                                                    && state.snapshot.config.accent_color == swatch;
+                                                let (s_rect, s_resp) =
+                                                    ui.allocate_exact_size(Vec2::splat(26.0), Sense::click());
+                                                if active {
+                                                    ui.painter().circle_stroke(
+                                                        s_rect.center(),
+                                                        12.5,
+                                                        Stroke::new(1.8_f32, Color32::WHITE),
+                                                    );
+                                                }
+                                                ui.painter().circle_filled(s_rect.center(), 9.5, swatch.color());
+                                                if s_resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
+                                                    state.snapshot.config.accent_color = swatch;
+                                                    state.snapshot.config.custom_accent_rgb = None;
+                                                    cfg_changed = true;
+                                                }
+                                            }
+                                            let mut rgb = [
+                                                accent.color().r(),
+                                                accent.color().g(),
+                                                accent.color().b(),
+                                            ];
+                                            if ui.color_edit_button_srgb(&mut rgb).changed() {
+                                                state.snapshot.config.custom_accent_rgb = Some(rgb);
+                                                cfg_changed = true;
+                                            }
+                                        });
+                                    },
+                                );
+                            });
+                        }
 
                         settings_divider(ui);
 
@@ -2865,7 +3093,12 @@ fn render_settings(
                     });
 
                     ui.add_space(18.0);
+                }
 
+                if show_cat(
+                    SettingsCategory::Updates,
+                    "updates version github release check install",
+                ) {
                     settings_section_header(ui, "Updates", Some("github.com/BioBuch/Rewind/releases"));
                     settings_card(ui, |ui| {
                         let status_sub = match &state.update_status {
@@ -2946,44 +3179,16 @@ fn render_settings(
                     });
 
                     ui.add_space(28.0);
-                });
+                }
             });
         });
+            },
+        );
+    });
 
     if cfg_changed {
         state.push_config_update(now_secs);
     }
-}
-
-fn render_disabled_rate_row(ui: &mut Ui, title: &str, subtitle: &str, right_pill: &str) {
-    settings_row(ui, UiIcon::Bitrate, TEXT_DIM, title, subtitle, |ui| {
-        let (b_rect, _) = ui.allocate_exact_size(Vec2::new(146.0, 22.0), Sense::hover());
-        ui.painter().rect_filled(
-            b_rect,
-            Rounding::same(5.0),
-            Color32::from_rgb(18, 22, 31),
-        );
-        ui.painter().rect_stroke(
-            b_rect,
-            Rounding::same(5.0),
-            Stroke::new(1.0_f32, Color32::from_rgb(30, 36, 48)),
-        );
-        ui.painter().text(
-            b_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            right_pill,
-            FontId::proportional(10.5),
-            TEXT_DIM,
-        );
-    });
-    let w = ui.available_width().max(60.0);
-    let (r, _) = ui.allocate_exact_size(Vec2::new(w, 12.0), Sense::hover());
-    let track_r = Rect::from_min_max(
-        Pos2::new(r.left() + 6.0, r.center().y - 2.0),
-        Pos2::new(r.right() - 6.0, r.center().y + 2.0),
-    );
-    ui.painter()
-        .rect_filled(track_r, Rounding::same(2.0), Color32::from_rgb(26, 31, 41));
 }
 
 fn render_active_popover(
@@ -3088,7 +3293,9 @@ fn render_active_popover(
                                 .color(TEXT_MUTED),
                             );
                             ui.add_space(8.0);
-                            if popover_settings_link_btn(ui, "Go to Recorder Settings", accent) {
+                            if popover_settings_link_btn(ui, "Go to Clipping Settings", accent) {
+                                state.settings_category = SettingsCategory::Clipping;
+                                state.settings_search.clear();
                                 state.navigate(NavTab::Settings);
                             }
                         }
@@ -3103,7 +3310,9 @@ fn render_active_popover(
                                 .color(TEXT_MUTED),
                             );
                             ui.add_space(8.0);
-                            if popover_settings_link_btn(ui, "Go to Recorder Settings", accent) {
+                            if popover_settings_link_btn(ui, "Go to Capture Settings", accent) {
+                                state.settings_category = SettingsCategory::Capture;
+                                state.settings_search.clear();
                                 state.navigate(NavTab::Settings);
                             }
                         }
@@ -3470,9 +3679,22 @@ fn render_clip_modal(ctx: &egui::Context, state: &mut RewindUiState, now_secs: f
             state.last_player_frame = Some(arc);
         }
         if !preload_ready {
-            ctx.request_repaint();
-        } else if state.player_playing {
-            state.player_pos_secs = dec.current_pos_secs().clamp(0.0, dur);
+            ctx.request_repaint_after(std::time::Duration::from_millis(16));
+        } else if state.player_playing && dur > 0.2 {
+            let t_min = state.trim_start_secs.clamp(0.0, dur);
+            let t_max = state.trim_end_secs.clamp((t_min + 0.1).min(dur), dur);
+            let cur = dec.current_pos_secs().clamp(0.0, dur);
+            if cur < t_min - 0.08 || cur >= t_max {
+                let seek_id = Id::new("trim_loop_seek_ts");
+                let last_seek = ctx.data(|d| d.get_temp::<f64>(seek_id).unwrap_or(-10.0));
+                if (now_secs - last_seek) > 0.35 {
+                    ctx.data_mut(|d| d.insert_temp(seek_id, now_secs));
+                    state.player_pos_secs = t_min;
+                    dec.seek(t_min);
+                }
+            } else {
+                state.player_pos_secs = cur;
+            }
             ctx.request_repaint_after(std::time::Duration::from_millis(6));
         } else if state.player_texture.is_none() {
             ctx.request_repaint_after(std::time::Duration::from_millis(16));
@@ -3649,33 +3871,59 @@ fn render_clip_modal(ctx: &egui::Context, state: &mut RewindUiState, now_secs: f
                                     }
                                 }
                             } else {
-                                let title_resp = ui.add(
-                                    egui::Label::new(
-                                        RichText::new(&clip.title)
-                                            .size(15.0)
-                                            .strong()
-                                            .color(TEXT_PRIMARY),
-                                    )
-                                    .sense(Sense::click()),
+                                let galley = ui.painter().layout_no_wrap(
+                                    clip.title.clone(),
+                                    FontId::proportional(15.0),
+                                    TEXT_PRIMARY,
+                                );
+                                let pad_x = 8.0;
+                                let pen_w = 13.0;
+                                let gap = 7.0;
+                                let total_w =
+                                    (galley.size().x + pad_x * 2.0 + gap + pen_w).min(460.0);
+                                let (t_rect, title_resp) = ui.allocate_exact_size(
+                                    Vec2::new(total_w, 28.0),
+                                    Sense::click(),
+                                );
+                                let hov = title_resp.hovered();
+                                if hov {
+                                    ui.painter().rect_filled(
+                                        t_rect,
+                                        Rounding::same(6.0),
+                                        Color32::from_rgba_unmultiplied(255, 255, 255, 16),
+                                    );
+                                    ui.painter().rect_stroke(
+                                        t_rect,
+                                        Rounding::same(6.0),
+                                        Stroke::new(
+                                            1.0_f32,
+                                            Color32::from_rgba_unmultiplied(255, 255, 255, 26),
+                                        ),
+                                    );
+                                }
+                                ui.painter().galley(
+                                    Pos2::new(
+                                        t_rect.left() + pad_x,
+                                        t_rect.center().y - galley.size().y * 0.5,
+                                    ),
+                                    galley,
+                                    TEXT_PRIMARY,
+                                );
+                                let pen_rect = Rect::from_center_size(
+                                    Pos2::new(t_rect.right() - pad_x - pen_w * 0.5, t_rect.center().y),
+                                    Vec2::splat(pen_w),
+                                );
+                                paint_icon(
+                                    ui.painter(),
+                                    pen_rect,
+                                    UiIcon::Edit,
+                                    if hov { TEXT_PRIMARY } else { TEXT_DIM },
                                 );
                                 if title_resp
                                     .on_hover_text("Click to rename")
-                                    .on_hover_cursor(CursorIcon::Text)
+                                    .on_hover_cursor(CursorIcon::PointingHand)
                                     .clicked()
                                 {
-                                    state.rename_buf = clip.title.clone();
-                                    state.rename_editing = true;
-                                    state.editor_rename_just_opened = true;
-                                }
-                                if modal_action_pill(
-                                    ui,
-                                    UiIcon::Edit,
-                                    "Edit Name",
-                                    TEXT_PRIMARY,
-                                    pill_bg(),
-                                    border_col(),
-                                    TEXT_MUTED,
-                                ) {
                                     state.rename_buf = clip.title.clone();
                                     state.rename_editing = true;
                                     state.editor_rename_just_opened = true;
@@ -3936,15 +4184,31 @@ fn render_clip_modal(ctx: &egui::Context, state: &mut RewindUiState, now_secs: f
                                                     1 => {
                                                         state.trim_start_secs = t_val
                                                             .min((state.trim_end_secs - 0.2).max(0.0));
+                                                        if state.player_pos_secs < state.trim_start_secs {
+                                                            state.player_pos_secs = state.trim_start_secs;
+                                                            if let Some(dec) = &state.decoder {
+                                                                dec.seek(state.trim_start_secs);
+                                                            }
+                                                        }
                                                     }
                                                     2 => {
                                                         state.trim_end_secs = t_val
                                                             .max((state.trim_start_secs + 0.2).min(dur));
+                                                        if state.player_pos_secs > state.trim_end_secs {
+                                                            state.player_pos_secs = state.trim_end_secs;
+                                                            if let Some(dec) = &state.decoder {
+                                                                dec.seek(state.trim_end_secs);
+                                                            }
+                                                        }
                                                     }
                                                     _ => {
-                                                        state.player_pos_secs = t_val;
+                                                        let clamped = t_val.clamp(
+                                                            state.trim_start_secs,
+                                                            state.trim_end_secs,
+                                                        );
+                                                        state.player_pos_secs = clamped;
                                                         if let Some(dec) = &state.decoder {
-                                                            dec.seek(t_val);
+                                                            dec.seek(clamped);
                                                         }
                                                     }
                                                 }
@@ -4093,16 +4357,24 @@ fn render_clip_modal(ctx: &egui::Context, state: &mut RewindUiState, now_secs: f
 
                                 if modal_action_pill(
                                     ui,
-                                    UiIcon::Link,
-                                    "Copy Link",
+                                    UiIcon::Library,
+                                    "Copy Video",
                                     TEXT_PRIMARY,
                                     pill_bg(),
                                     border_col(),
                                     TEXT_MUTED,
                                 ) {
-                                    ctx.copy_text(clip.file_path.clone());
-                                    state.status_banner =
-                                        Some(("Copied clip link".to_owned(), now_secs));
+                                    if copy_file_to_clipboard(&clip.file_path) {
+                                        state.status_banner = Some((
+                                            "Copied video file to clipboard".to_owned(),
+                                            now_secs,
+                                        ));
+                                    } else {
+                                        state.status_banner = Some((
+                                            "Failed to copy video to clipboard".to_owned(),
+                                            now_secs,
+                                        ));
+                                    }
                                 }
 
                                 let enc_busy = state.discord_encode_progress.is_some();
@@ -4752,7 +5024,7 @@ fn settings_card(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui)) {
     egui::Frame::none()
         .fill(card_bg())
         .stroke(Stroke::new(1.0_f32, border_col()))
-        .rounding(Rounding::same(11.0))
+        .rounding(Rounding::same(7.0))
         .inner_margin(Margin::symmetric(16.0, 12.0))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -5263,11 +5535,14 @@ fn render_player_controls_overlay(
         Pos2::new(ctrl_bounds.right() - 14.0, ctrl_bounds.bottom() - 40.0),
     );
     ui.allocate_new_ui(egui::UiBuilder::new().max_rect(scrub_rect), |ui| {
-        let mut pos = state.player_pos_secs.clamp(0.0, dur);
+        let t_min = state.trim_start_secs.clamp(0.0, dur);
+        let t_max = state.trim_end_secs.clamp((t_min + 0.1).min(dur), dur);
+        let mut pos = state.player_pos_secs.clamp(t_min, t_max);
         if custom_slider(ui, "player_scrub", &mut pos, 0.0, dur, ac) {
-            state.player_pos_secs = pos;
+            let clamped = pos.clamp(t_min, t_max);
+            state.player_pos_secs = clamped;
             if let Some(dec) = &state.decoder {
-                dec.seek(pos);
+                dec.seek(clamped);
             }
         }
     });
@@ -5604,33 +5879,80 @@ fn render_close_notice_modal(ctx: &egui::Context, state: &mut RewindUiState) {
                             .color(TEXT_MUTED),
                         );
                         ui.add_space(18.0);
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            ui.spacing_mut().item_spacing.x = 10.0;
-                            let ok_fg = contrasting_fg(ac);
-                            if modal_action_pill(
-                                ui,
-                                UiIcon::Check,
-                                "Okay",
-                                ok_fg,
-                                ac,
-                                ac,
-                                ok_fg,
-                            ) {
-                                state.show_close_recording_notice = false;
-                                state.allow_close_now = true;
-                                ctx.send_viewport_cmd(ViewportCommand::Close);
+                        let chk_id = Id::new("dont_remind_close_chk");
+                        let mut dont_remind = ui
+                            .ctx()
+                            .data_mut(|d| d.get_temp::<bool>(chk_id).unwrap_or(false));
+                        ui.horizontal(|ui| {
+                            let (c_rect, c_resp) =
+                                ui.allocate_exact_size(Vec2::new(170.0, 26.0), Sense::click());
+                            let box_r = Rect::from_center_size(
+                                Pos2::new(c_rect.left() + 9.0, c_rect.center().y),
+                                Vec2::splat(16.0),
+                            );
+                            ui.painter().rect_filled(
+                                box_r,
+                                Rounding::same(4.0),
+                                if dont_remind { ac } else { pill_bg() },
+                            );
+                            ui.painter().rect_stroke(
+                                box_r,
+                                Rounding::same(4.0),
+                                Stroke::new(1.0_f32, if dont_remind { ac } else { border_col() }),
+                            );
+                            if dont_remind {
+                                paint_icon(
+                                    ui.painter(),
+                                    box_r.shrink(3.0),
+                                    UiIcon::Check,
+                                    contrasting_fg(ac),
+                                );
                             }
-                            if modal_action_pill(
-                                ui,
-                                UiIcon::Close,
-                                "Cancel",
-                                TEXT_PRIMARY,
-                                pill_bg(),
-                                border_col(),
+                            ui.painter().text(
+                                Pos2::new(box_r.right() + 8.0, c_rect.center().y),
+                                egui::Align2::LEFT_CENTER,
+                                "Don't remind me again",
+                                FontId::proportional(12.0),
                                 TEXT_MUTED,
-                            ) {
-                                state.show_close_recording_notice = false;
+                            );
+                            if c_resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
+                                dont_remind = !dont_remind;
+                                ui.ctx().data_mut(|d| d.insert_temp(chk_id, dont_remind));
                             }
+
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                ui.spacing_mut().item_spacing.x = 10.0;
+                                let ok_fg = contrasting_fg(ac);
+                                if modal_action_pill(
+                                    ui,
+                                    UiIcon::Check,
+                                    "Okay",
+                                    ok_fg,
+                                    ac,
+                                    ac,
+                                    ok_fg,
+                                ) {
+                                    if dont_remind {
+                                        state.snapshot.config.suppress_recording_close_prompt =
+                                            true;
+                                        state.push_config_update(ctx.input(|i| i.time));
+                                    }
+                                    state.show_close_recording_notice = false;
+                                    state.allow_close_now = true;
+                                    ctx.send_viewport_cmd(ViewportCommand::Close);
+                                }
+                                if modal_action_pill(
+                                    ui,
+                                    UiIcon::Close,
+                                    "Cancel",
+                                    TEXT_PRIMARY,
+                                    pill_bg(),
+                                    border_col(),
+                                    TEXT_MUTED,
+                                ) {
+                                    state.show_close_recording_notice = false;
+                                }
+                            });
                         });
                     });
                 },
@@ -5646,13 +5968,19 @@ fn paint_game_badge(
     accent: Color32,
 ) {
     if let Some(tex) = state.get_or_fetch_game_icon(ui.ctx(), game_name) {
+        let rad = rect.width().min(rect.height()) * 0.5;
         paint_rounded_image(
             ui.painter(),
             tex.id(),
             rect,
-            Rounding::same((rect.width() * 0.24).clamp(2.5, 5.0)),
+            Rounding::same(rad),
             Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
             Color32::WHITE,
+        );
+        ui.painter().circle_stroke(
+            rect.center(),
+            rad,
+            Stroke::new(0.8_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 28)),
         );
     } else {
         paint_game_badge_initial(ui.painter(), rect, game_name, accent);
@@ -5926,7 +6254,7 @@ fn render_onboarding_and_tour(ctx: &egui::Context, state: &mut RewindUiState, no
                                         state.active_tab = NavTab::Home;
                                         if !state.snapshot.config.onboarding_completed {
                                             state.snapshot.config.onboarding_completed = true;
-                                            state.push_config_update(now_secs);
+                                            state.push_config_update(ctx.input(|i| i.time));
                                         }
                                     }
                                 });
@@ -5952,7 +6280,7 @@ fn render_onboarding_and_tour(ctx: &egui::Context, state: &mut RewindUiState, no
                                             state.active_tab = NavTab::Home;
                                             if !state.snapshot.config.onboarding_completed {
                                                 state.snapshot.config.onboarding_completed = true;
-                                                state.push_config_update(now_secs);
+                                                state.push_config_update(ctx.input(|i| i.time));
                                             }
                                         } else {
                                             let next = tour_idx + 1;
@@ -6119,7 +6447,7 @@ fn render_onboarding_and_tour(ctx: &egui::Context, state: &mut RewindUiState, no
                                         let sel = state.snapshot.config.clip_length == cl;
                                         if onboarding_pill(ui, lbl, sel, ac) {
                                             state.snapshot.config.clip_length = cl;
-                                            state.push_config_update(now_secs);
+                                            state.push_config_update(ctx.input(|i| i.time));
                                         }
                                         ui.add_space(6.0);
                                     }
@@ -6182,14 +6510,14 @@ fn render_onboarding_and_tour(ctx: &egui::Context, state: &mut RewindUiState, no
                                 } else {
                                     if onboarding_pill(ui, "Start Quick Tour", true, ac) {
                                         state.snapshot.config.onboarding_completed = true;
-                                        state.push_config_update(now_secs);
+                                        state.push_config_update(ctx.input(|i| i.time));
                                         state.tour_step = Some(0);
                                         state.active_tab = NavTab::Home;
                                     }
                                     ui.add_space(8.0);
                                     if onboarding_pill(ui, "Skip Tour", false, ac) {
                                         state.snapshot.config.onboarding_completed = true;
-                                        state.push_config_update(now_secs);
+                                        state.push_config_update(ctx.input(|i| i.time));
                                     }
                                 }
                                 if step > 0 {

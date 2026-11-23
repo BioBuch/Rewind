@@ -19,7 +19,8 @@ use windows::Win32::Graphics::Direct3D11::{
     ID3D11VideoProcessorInputView, ID3D11VideoProcessorOutputView, D3D11_BIND_RENDER_TARGET,
     D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_VIDEO_SUPPORT, D3D11_SDK_VERSION,
     D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE,
-    D3D11_VIDEO_PROCESSOR_CONTENT_DESC, D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC,
+    D3D11_VIDEO_PROCESSOR_COLOR_SPACE, D3D11_VIDEO_PROCESSOR_CONTENT_DESC,
+    D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC,
     D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC_0, D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC,
     D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC_0, D3D11_VIDEO_PROCESSOR_STREAM,
     D3D11_VIDEO_USAGE_OPTIMAL_SPEED, D3D11_VPIV_DIMENSION_TEXTURE2D, D3D11_VPOV_DIMENSION_TEXTURE2D,
@@ -988,6 +989,16 @@ unsafe fn create_nv12_video_processor(
     vctx.VideoProcessorSetStreamSourceRect(&processor, 0, true, Some(&src_rect));
     vctx.VideoProcessorSetStreamDestRect(&processor, 0, true, Some(&dst_rect));
     vctx.VideoProcessorSetOutputTargetRect(&processor, true, Some(&dst_rect));
+
+    let in_cs = D3D11_VIDEO_PROCESSOR_COLOR_SPACE {
+        _bitfield: (1 << 2) | (2 << 4),
+    };
+    vctx.VideoProcessorSetStreamColorSpace(&processor, 0, &in_cs);
+
+    let out_cs = D3D11_VIDEO_PROCESSOR_COLOR_SPACE {
+        _bitfield: (1 << 2) | (1 << 4),
+    };
+    vctx.VideoProcessorSetOutputColorSpace(&processor, &out_cs);
 
     let tex_desc = D3D11_TEXTURE2D_DESC {
         Width: out_w,

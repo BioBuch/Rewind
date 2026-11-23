@@ -91,13 +91,7 @@ impl CompressedRingBuffer {
         self.used_bytes = 0;
         self.write_head = 0;
         self.latest_pts_100ns = i64::MIN;
-        let mut new_slab = Vec::new();
-        if new_slab.try_reserve_exact(self.max_bytes_cap).is_ok() {
-            new_slab.resize(self.max_bytes_cap, 0);
-            self.slab = new_slab;
-        } else {
-            self.slab = vec![0_u8; self.max_bytes_cap];
-        }
+        self.slab = vec![0_u8; self.max_bytes_cap];
     }
 
     fn evict_front(&mut self) {
@@ -131,6 +125,14 @@ impl CompressedRingBuffer {
         let cap = self.slab.len();
         if cap == 0 || pkt_len > cap {
             return;
+        }
+
+        let early_wrap = match self.packets.front() {
+            None => true,
+            Some(f) => f.offset < self.write_head && f.offset >= pkt_len.max(self.used_bytes),
+        };
+        if early_wrap {
+            self.write_head = 0;
         }
 
         let offset = if pkt_len <= cap.saturating_sub(self.write_head) {
@@ -336,6 +338,36 @@ mod tests {
         for pkt in &snap {
             let expected_tag = (((pkt.pts_100ns / 1_000_000) % 200) + 1) as u8;
             assert_eq!(pkt.data.len(), 900);
+            assert!(pkt.data.iter().all(|&b| b == expected_tag));
+        }
+    }
+
+    #[test]
+    fn early_wrap_keeps_touched_region_near_live_data() {
+        let mut rb = CompressedRingBuffer::new(2, 64 * 1024 * 1024);
+        rb.preallocate();
+        let mut max_head = 0_usize;
+        for i in 0_i64..2000 {
+            let tag = ((i % 200) + 1) as u8;
+            rb.push(EncodedPacket {
+                track: PacketTrack::Video,
+                pts_100ns: i * 166_666,
+                dts_100ns: i * 166_666,
+                duration_100ns: 166_666,
+                is_idr_keyframe: i % 60 == 0,
+                data: vec![tag; 8192],
+            });
+            max_head = max_head.max(rb.write_head);
+        }
+        assert!(max_head <= rb.total_bytes() * 3, "max_head={max_head} live={}", rb.total_bytes());
+        let snap = rb.snapshot_from_nearest_idr(2);
+        assert!(!snap.is_empty());
+        assert!(snap[0].is_idr_keyframe);
+        for w in snap.windows(2) {
+            assert!(w[1].pts_100ns > w[0].pts_100ns);
+        }
+        for pkt in &snap {
+            let expected_tag = (((pkt.pts_100ns / 166_666) % 200) + 1) as u8;
             assert!(pkt.data.iter().all(|&b| b == expected_tag));
         }
     }

@@ -354,6 +354,10 @@ pub struct AppConfig {
     pub onboarding_completed: bool,
     pub discord_rich_presence: bool,
     pub discord_app_id: String,
+    #[serde(default)]
+    pub clip_post_buffer_secs: u32,
+    #[serde(default)]
+    pub suppress_recording_close_prompt: bool,
 }
 
 impl Default for AppConfig {
@@ -398,6 +402,8 @@ impl Default for AppConfig {
             onboarding_completed: false,
             discord_rich_presence: true,
             discord_app_id: DEFAULT_DISCORD_APP_ID.to_owned(),
+            clip_post_buffer_secs: 0,
+            suppress_recording_close_prompt: false,
         }
     }
 }
@@ -414,6 +420,10 @@ fn normalize_loaded_config(mut cfg: AppConfig) -> AppConfig {
     if cfg.codec == VideoCodec::H264 && cfg.fps == FrameRate::Fps120 {
         cfg.fps = FrameRate::Fps60;
     }
+    cfg.clip_post_buffer_secs = match cfg.clip_post_buffer_secs {
+        5 | 10 | 15 => cfg.clip_post_buffer_secs,
+        _ => 0,
+    };
     cfg
 }
 

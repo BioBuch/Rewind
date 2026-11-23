@@ -98,6 +98,50 @@ pub struct GameDeckSummary {
     pub latest_thumb_path: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsCategory {
+    Capture,
+    Clipping,
+    Audio,
+    Hotkeys,
+    Games,
+    Storage,
+    Personalization,
+    Discord,
+    System,
+    Updates,
+}
+
+impl SettingsCategory {
+    pub const ALL: [Self; 10] = [
+        Self::Capture,
+        Self::Clipping,
+        Self::Audio,
+        Self::Hotkeys,
+        Self::Games,
+        Self::Storage,
+        Self::Personalization,
+        Self::Discord,
+        Self::System,
+        Self::Updates,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Capture => "Capture & Quality",
+            Self::Clipping => "Clipping",
+            Self::Audio => "Audio",
+            Self::Hotkeys => "Hotkeys",
+            Self::Games => "Game Detection",
+            Self::Storage => "Storage",
+            Self::Personalization => "Personalization",
+            Self::Discord => "Discord Rich Presence",
+            Self::System => "System & Startup",
+            Self::Updates => "Updates",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpdateStatus {
     Idle,
@@ -185,6 +229,8 @@ pub struct RewindUiState {
     discord_encode_rx: Option<Receiver<Result<(PathBuf, u64), String>>>,
     pub onboarding_step: usize,
     pub tour_step: Option<usize>,
+    pub settings_category: SettingsCategory,
+    pub settings_search: String,
 
     ipc_tx: Sender<IpcRequest>,
     ipc_rx: Receiver<Result<IpcResponse, String>>,
@@ -292,6 +338,8 @@ impl RewindUiState {
             discord_encode_rx: None,
             onboarding_step: 0,
             tour_step: None,
+            settings_category: SettingsCategory::Capture,
+            settings_search: String::new(),
             ipc_tx: req_tx,
             ipc_rx: res_rx,
         };
@@ -697,13 +745,18 @@ impl RewindUiState {
             d.set_audio_gain(gain);
             d.set_playing(true);
         }
+        if let Some(old) = self.decoder.take() {
+            std::thread::spawn(move || drop(old));
+        }
         self.decoder = dec;
     }
 
     pub fn close_clip_modal(&mut self) {
         self.selected_clip_id = None;
         self.last_player_frame = None;
-        self.decoder = None;
+        if let Some(old) = self.decoder.take() {
+            std::thread::spawn(move || drop(old));
+        }
         self.player_texture = None;
         self.player_frame_seq = 0;
         self.player_playing = false;

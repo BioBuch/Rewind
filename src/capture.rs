@@ -35,7 +35,7 @@ use windows::Win32::Graphics::Gdi::{MonitorFromPoint, MONITOR_DEFAULTTOPRIMARY};
 use windows::Win32::Media::MediaFoundation::{
     CODECAPI_AVEncCommonBufferSize, CODECAPI_AVEncCommonMaxBitRate, CODECAPI_AVEncCommonMeanBitRate,
     CODECAPI_AVEncCommonQuality, CODECAPI_AVEncCommonQualityVsSpeed,
-    CODECAPI_AVEncCommonRateControlMode, CODECAPI_AVEncH264CABACEnable,
+    CODECAPI_AVEncCommonRateControlMode,
     CODECAPI_AVEncMPVDefaultBPictureCount, CODECAPI_AVEncMPVGOPSize, CODECAPI_AVEncVideoEncodeQP,
     CODECAPI_AVLowLatencyMode, ICodecAPI, IMFActivate, IMFDXGIDeviceManager, IMFMediaBuffer,
     IMFMediaEventGenerator, IMFSample, IMFTransform, MFCreateDXGIDeviceManager,
@@ -708,7 +708,7 @@ impl GpuCapturePipeline {
             }
 
             if self.is_async_mft && self.need_input_count == 0 {
-                let wait_budget = ((nominal_dur * 3) / 4).clamp(25_000, 60_000);
+                let wait_budget = (nominal_dur / 3).clamp(10_000, 30_000);
                 let wait_deadline = qpc_now_100ns() + wait_budget;
                 while qpc_now_100ns() < wait_deadline {
                     if self.have_output_count > 0 {
@@ -1196,13 +1196,10 @@ unsafe fn apply_codec_api_settings(mft: &IMFTransform, fps: u32, cfg: &AppConfig
         }
         let gop_frames = fps.max(15);
         let _ = codec_api.SetValue(&CODECAPI_AVEncMPVGOPSize, &VARIANT::from(gop_frames));
-        let low_lat = cfg.rate_control == RateControl::Cqp;
+        let low_lat = cfg.rate_control == RateControl::Cqp && cfg.codec != VideoCodec::H264;
         let _ = codec_api.SetValue(&CODECAPI_AVLowLatencyMode, &VARIANT::from(low_lat));
         let _ = codec_api.SetValue(&CODECAPI_AVEncMPVDefaultBPictureCount, &VARIANT::from(0_u32));
         let _ = codec_api.SetValue(&CODECAPI_AVEncCommonQualityVsSpeed, &VARIANT::from(0_u32));
-        if cfg.codec == VideoCodec::H264 {
-            let _ = codec_api.SetValue(&CODECAPI_AVEncH264CABACEnable, &VARIANT::from(true));
-        }
     }
 }
 
@@ -1646,5 +1643,41 @@ mod tests {
         );
         assert!(bytes_q16 > (bytes_q28 * 13 / 10), "CQP 16 ({bytes_q16}) should be much larger than CQP 28 ({bytes_q28})");
         assert!(bytes_b45 > (bytes_b6 * 2), "CBR 45Mbps ({bytes_b45}) should be >2x CBR 6Mbps ({bytes_b6})");
+    }
+
+    #[test]
+    fn h264_cqp_pipeline_emits_video_packets() {
+        let mut cfg = AppConfig::default();
+        cfg.codec = VideoCodec::H264;
+        cfg.encoder_preference = EncoderPreference::Amf;
+        cfg.rate_control = RateControl::Cqp;
+        cfg.cqp_qp = 19;
+        cfg.fps = crate::config::FrameRate::Fps120;
+        let hw = detect_hardware();
+        let mut pipe = GpuCapturePipeline::open(&cfg, &hw).expect("open pipeline");
+        assert!(pipe.encoder.is_some(), "encoder should be Some");
+        let mut pkts = Vec::new();
+        for _ in 0..120 {
+            pkts.extend(pipe.capture_and_encode_frame());
+            std::thread::sleep(std::time::Duration::from_millis(8));
+        }
+        let mut max_gap_ms = 0_i64;
+        for w in pkts.windows(2) {
+            let gap_ms = (w[1].pts_100ns - w[0].pts_100ns) / 10_000;
+            if gap_ms > max_gap_ms {
+                max_gap_ms = gap_ms;
+            }
+        }
+        eprintln!(
+            "H264_CQP_PKTS: total={} idr={} async={} started={} need_in={} have_out={} max_gap_ms={}",
+            pkts.len(),
+            pkts.iter().filter(|p| p.is_idr_keyframe).count(),
+            pipe.is_async_mft,
+            pipe.started,
+            pipe.need_input_count,
+            pipe.have_output_count,
+            max_gap_ms,
+        );
+        assert!(!pkts.is_empty(), "expected video packets");
     }
 }

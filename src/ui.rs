@@ -2226,6 +2226,29 @@ fn render_settings(
 
                     ui.add_space(18.0);
 
+                    settings_section_header(ui, "Discord Rich Presence", None);
+                    settings_card(ui, |ui| {
+                        settings_row(
+                            ui,
+                            UiIcon::Codec,
+                            Color32::from_rgb(88, 101, 242),
+                            "Show Activity on Discord",
+                            "Displays active game and Instant Replay status on your Discord profile",
+                            |ui| {
+                                if toggle_switch(
+                                    ui,
+                                    "discord_rpc_switch",
+                                    &mut state.snapshot.config.discord_rich_presence,
+                                    accent.color(),
+                                ) {
+                                    cfg_changed = true;
+                                }
+                            },
+                        );
+                    });
+
+                    ui.add_space(18.0);
+
                     settings_section_header(
                         ui,
                         "Game Detection",
@@ -2984,7 +3007,7 @@ fn render_active_popover(
         ActivePopup::SortMenu => (132.0, true),
         ActivePopup::SettingsClipLength => (144.0, true),
         ActivePopup::SettingsResolution => (108.0, true),
-        ActivePopup::SettingsFps => (108.0, true),
+        ActivePopup::SettingsFps => (188.0, true),
         ActivePopup::SettingsCodec => (160.0, true),
         ActivePopup::SettingsEncoder => (172.0, true),
         ActivePopup::SettingsRateControl => (150.0, true),
@@ -3202,13 +3225,18 @@ fn render_active_popover(
                         }
                         ActivePopup::SettingsFps => {
                             for fps in FrameRate::ALL {
-                                if popover_check_item(
+                                let enabled = !(fps == FrameRate::Fps120
+                                    && state.snapshot.config.codec == VideoCodec::H264);
+                                let sub = (!enabled).then_some("Requires H.265 (HEVC) or AV1");
+                                if popover_check_item_enabled(
                                     ui,
                                     fps.label(),
-                                    None,
+                                    sub,
                                     state.snapshot.config.fps == fps,
                                     accent,
-                                ) {
+                                    enabled,
+                                ) && enabled
+                                {
                                     state.snapshot.config.fps = fps;
                                     state.push_config_update(now_secs);
                                     state.active_popup = ActivePopup::None;
@@ -3229,6 +3257,11 @@ fn render_active_popover(
                                 ) && supported
                                 {
                                     state.snapshot.config.codec = codec;
+                                    if codec == VideoCodec::H264
+                                        && state.snapshot.config.fps == FrameRate::Fps120
+                                    {
+                                        state.snapshot.config.fps = FrameRate::Fps60;
+                                    }
                                     state.push_config_update(now_secs);
                                     state.active_popup = ActivePopup::None;
                                 }

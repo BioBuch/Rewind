@@ -2,6 +2,7 @@ pub mod app_icon;
 pub mod audio;
 pub mod capture;
 pub mod config;
+pub mod discord_rpc;
 pub mod game_detector;
 pub mod game_icons;
 pub mod ipc;

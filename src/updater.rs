@@ -23,8 +23,15 @@ pub fn parse_semver(raw: &str) -> Option<(u64, u64, u64)> {
     let core = trimmed.split(['-', '+']).next().unwrap_or(trimmed);
     let mut parts = core.split('.');
     let major = parts.next()?.parse::<u64>().ok()?;
-    let minor = parts.next().unwrap_or("0").parse::<u64>().ok()?;
-    let patch = parts.next().unwrap_or("0").parse::<u64>().ok()?;
+    let second = parts.next();
+    let third = parts.next();
+    let (minor, patch) = match (second, third) {
+        (Some(s), None) if s.len() > 1 && s.starts_with('0') => (0, s.parse::<u64>().ok()?),
+        (s, p) => (
+            s.unwrap_or("0").parse::<u64>().ok()?,
+            p.unwrap_or("0").parse::<u64>().ok()?,
+        ),
+    };
     Some((major, minor, patch))
 }
 
@@ -167,5 +174,7 @@ mod tests {
         assert!(is_newer_version("v1.0.0", "0.2.9"));
         assert!(!is_newer_version("v0.2.0", "0.2.0"));
         assert!(!is_newer_version("v0.1.9", "0.2.0"));
+        assert!(!is_newer_version("v1.01", "1.0.1"));
+        assert!(is_newer_version("v1.02", "1.0.1"));
     }
 }

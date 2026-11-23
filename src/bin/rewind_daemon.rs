@@ -7,6 +7,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use rewind::discord_rpc::{build_activity_strings, DiscordRpcClient};
+
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{
     CloseHandle, ERROR_ALREADY_EXISTS, HWND, LPARAM, LRESULT, POINT, WPARAM,
@@ -1070,6 +1072,10 @@ fn main() {
         });
     });
 
+    let rpc_core = core.clone();
+    let rpc_stop = stop.clone();
+    let rpc_thread = thread::spawn(move || run_discord_rpc_loop(rpc_core, rpc_stop));
+
     unsafe {
         let hinst = GetModuleHandleW(None).unwrap_or_default();
         let cls_name = to_wide_null("RewindTrayHostWnd");
@@ -1152,7 +1158,63 @@ fn main() {
     let _ = send_request(&IpcRequest::GetSnapshot);
     let _ = cap_thread.join();
     let _ = ipc_thread.join();
+    let _ = rpc_thread.join();
     unsafe {
         let _ = CloseHandle(mutex_handle);
     }
+}
+
+fn run_discord_rpc_loop(core: Arc<Mutex<DaemonCore>>, stop: Arc<AtomicBool>) {
+    let mut client = DiscordRpcClient::new();
+    let start_unix = unix_now_secs();
+    let mut last_key: Option<(bool, String, Option<String>, bool, String, u32)> = None;
+
+    while !stop.load(Ordering::Acquire) {
+        let snap = {
+            if let Ok(g) = core.lock() {
+                Some((
+                    g.config.discord_rich_presence,
+                    rewind::config::DEFAULT_DISCORD_APP_ID.to_owned(),
+                    g.active_game.clone(),
+                    g.config.replay_on,
+                    g.config.resolution.label().to_owned(),
+                    g.config.fps.as_u32(),
+                ))
+            } else {
+                None
+            }
+        };
+
+        if let Some((enabled, app_id, game, replay_on, res_lbl, fps)) = snap {
+            if !enabled || app_id.is_empty() {
+                if client.is_connected_to(&app_id) || last_key.is_some() {
+                    client.clear_activity();
+                    client.disconnect();
+                    last_key = None;
+                }
+            } else {
+                let key = (enabled, app_id.clone(), game.clone(), replay_on, res_lbl.clone(), fps);
+                let need_send = !client.is_connected_to(&app_id) || last_key.as_ref() != Some(&key);
+                if need_send {
+                    let (details, state) =
+                        build_activity_strings(game.as_deref(), replay_on, &res_lbl, fps);
+                    if client.set_activity(&app_id, &details, &state, start_unix) {
+                        last_key = Some(key);
+                    } else {
+                        last_key = None;
+                    }
+                }
+            }
+        }
+
+        for _ in 0..20 {
+            if stop.load(Ordering::Acquire) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(200));
+        }
+    }
+
+    client.clear_activity();
+    client.disconnect();
 }

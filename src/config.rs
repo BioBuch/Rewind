@@ -352,6 +352,8 @@ pub struct AppConfig {
     pub custom_games: Vec<String>,
     pub ignored_games: Vec<String>,
     pub onboarding_completed: bool,
+    pub discord_rich_presence: bool,
+    pub discord_app_id: String,
 }
 
 impl Default for AppConfig {
@@ -394,13 +396,23 @@ impl Default for AppConfig {
             custom_games: Vec::new(),
             ignored_games: Vec::new(),
             onboarding_completed: false,
+            discord_rich_presence: true,
+            discord_app_id: DEFAULT_DISCORD_APP_ID.to_owned(),
         }
     }
 }
 
+pub const DEFAULT_DISCORD_APP_ID: &str = "1574498981218746409";
+
 fn normalize_loaded_config(mut cfg: AppConfig) -> AppConfig {
     if cfg.background_brightness == 0 {
         cfg.background_brightness = 55;
+    }
+    if cfg.discord_app_id.trim().is_empty() {
+        cfg.discord_app_id = DEFAULT_DISCORD_APP_ID.to_owned();
+    }
+    if cfg.codec == VideoCodec::H264 && cfg.fps == FrameRate::Fps120 {
+        cfg.fps = FrameRate::Fps60;
     }
     cfg
 }

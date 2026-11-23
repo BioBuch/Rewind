@@ -682,7 +682,6 @@ impl GpuCapturePipeline {
                     let src_tex = self.nv12_pool[self.last_nv12_slot].0.clone();
                     let dst_tex = self.nv12_pool[nv_slot].0.clone();
                     self.context.CopyResource(&dst_tex, &src_tex);
-                    self.context.Flush();
                     Some((dst_tex, Some(nv_slot)))
                 } else {
                     Some((self.nv12_pool[nv_slot].0.clone(), Some(nv_slot)))

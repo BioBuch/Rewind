@@ -28,24 +28,6 @@ struct PacketMeta {
     len: usize,
 }
 
-fn commit_pages(buf: &mut [u8]) {
-    if buf.is_empty() {
-        return;
-    }
-    let ptr = buf.as_mut_ptr();
-    let len = buf.len();
-    let mut i = 0_usize;
-    while i < len {
-        unsafe {
-            std::ptr::write_volatile(ptr.add(i), 0);
-        }
-        i += 4096;
-    }
-    unsafe {
-        std::ptr::write_volatile(ptr.add(len - 1), 0);
-    }
-}
-
 fn meta_intersects_range(meta: &PacketMeta, seg_start: usize, seg_end: usize) -> bool {
     if seg_start >= seg_end {
         return false;
@@ -112,11 +94,9 @@ impl CompressedRingBuffer {
         let mut new_slab = Vec::new();
         if new_slab.try_reserve_exact(self.max_bytes_cap).is_ok() {
             new_slab.resize(self.max_bytes_cap, 0);
-            commit_pages(&mut new_slab);
             self.slab = new_slab;
         } else {
             self.slab = vec![0_u8; self.max_bytes_cap];
-            commit_pages(&mut self.slab);
         }
     }
 

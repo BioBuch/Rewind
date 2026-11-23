@@ -1,6 +1,6 @@
 [package]
 name = "rewind"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 license = "GPL-3.0-only"
 description = "Lightweight Windows 11 native instant-replay capture daemon and ephemeral UI host"
@@ -68,7 +68,8 @@ windows = { version = "0.58", features = [
 ] }
 
 [profile.release]
-opt-level = "z"
+opt-level = 3
 lto = true
 strip = true
 codegen-units = 1
+panic = "abort"

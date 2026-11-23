@@ -1,0 +1,8 @@
+/target/
+/dist/
+*.mp4
+*.mkv
+*.tmp
+*.db
+*.db-journal
+*.log

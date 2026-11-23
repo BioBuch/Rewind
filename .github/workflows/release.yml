@@ -1,0 +1,67 @@
+name: Build & Publish Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v1)"
+        required: true
+        default: "v1"
+
+permissions:
+  contents: write
+
+jobs:
+  release-windows-x64:
+    name: Windows 11 x64 Release
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binaries and self-contained installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          cargo build --release --locked --bin rewind --bin rewind-daemon
+          Copy-Item target/release/rewind.exe dist/rewind.exe -Force
+          Copy-Item target/release/rewind-daemon.exe dist/rewind-daemon.exe -Force
+          cargo build --release --locked --bin Rewind-Setup
+          Copy-Item target/release/Rewind-Setup.exe dist/Rewind-Setup-x64.exe -Force
+
+      - name: Sign binaries (optional)
+        shell: pwsh
+        env:
+          CERT_B64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrEmpty($env:CERT_B64)) { Write-Host "No signing cert configured, skipping."; exit 0 }
+          [IO.File]::WriteAllBytes("cert.pfx", [Convert]::FromBase64String($env:CERT_B64))
+          $signtool = (Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1).FullName
+          foreach ($f in "dist/rewind.exe", "dist/rewind-daemon.exe", "dist/Rewind-Setup-x64.exe") {
+            & $signtool sign /f cert.pfx /p $env:CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $f
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
+          Remove-Item cert.pfx
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || (startsWith(github.ref, 'refs/tags/') && github.ref_name) || 'v1' }}
+          name: "Rewind ${{ github.event.inputs.tag || github.ref_name }}"
+          body_path: RELEASE_NOTES.md
+          files: |
+            dist/Rewind-Setup-x64.exe

@@ -52,9 +52,19 @@ Run tests with:
 cargo test --lib --bins
 ```
 
+## Code Signing Policy
+
+Free code signing is provided by [SignPath.io](https://signpath.io), using a certificate by the [SignPath Foundation](https://signpath.org).
+
+- **Committers and Reviewers:** [BioBuch](https://github.com/BioBuch)
+- **Approvers:** [BioBuch](https://github.com/BioBuch)
+- **Build Provenance:** Official release binaries (`rewind.exe`, `rewind-daemon.exe`, `Rewind-Setup-x64.exe`) are built exclusively on GitHub-hosted Actions runners (`windows-latest`) directly from this repository.
+
 ## Disclaimer
 
 Rewind only captures the desktop display using standard Windows APIs (`WGC` / `DXGI Desktop Duplication`) and never reads game memory, injects DLLs, or hooks DirectX. However, because third-party kernel anti-cheats (such as Riot Vanguard or Easy Anti-Cheat) operate at their own discretion and release binaries are currently unsigned, **use Rewind at your own risk — Rewind and its contributors are not responsible for any game or account bans.**
+
+All product names, logos, and brands are property of their respective owners.
 
 ## Support & License
 

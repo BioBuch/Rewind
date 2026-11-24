@@ -286,7 +286,7 @@ fn save_clip_immediate(core: &Arc<Mutex<DaemonCore>>, play_feedback: bool) -> Re
     let packets = if packets.iter().filter(|p| p.track == PacketTrack::Video).count() == 0 {
         let mut temp_pipe = GpuCapturePipeline::open(&cfg, &hw)
             .ok_or_else(|| "Unable to open D3D11/DXGI capture pipeline".to_owned())?;
-        let mut temp_ga = WasapiTrackStream::open_system_loopback_fallback();
+        let mut temp_ga = WasapiTrackStream::open_loopback(&cfg.game_audio_device);
         let mut temp_ma = WasapiTrackStream::open_microphone(&cfg.mic_device);
         let mut live_pkts = Vec::new();
         for _ in 0..45 {
@@ -568,30 +568,54 @@ fn handle_ipc_request(
             end_secs,
             vertical_9_16,
         } => {
-            let Ok(mut g) = core.lock() else {
-                return IpcResponse::err("Daemon lock failed");
-            };
-            let Some(src_rec) = g.library.get_by_id(id).ok().flatten() else {
-                return IpcResponse::err("Source clip not found");
+            let (src_rec, clips_folder) = {
+                let Ok(g) = core.lock() else {
+                    return IpcResponse::err("Daemon lock failed");
+                };
+                let Some(rec) = g.library.get_by_id(id).ok().flatten() else {
+                    return IpcResponse::err("Source clip not found");
+                };
+                (rec, PathBuf::from(&g.config.clips_folder))
             };
             let src_path = PathBuf::from(&src_rec.file_path);
+            if src_path
+                .extension()
+                .and_then(|s| s.to_str())
+                .map(|s| s.eq_ignore_ascii_case("mkv"))
+                .unwrap_or(false)
+            {
+                return IpcResponse::err("Lossless Quick Trim requires an MP4 clip");
+            }
             let stem = src_path.file_stem().and_then(|s| s.to_str()).unwrap_or("clip");
             let suffix = if vertical_9_16 { "9x16_trim" } else { "trim" };
+            let created_unix = unix_now_secs();
             let dst_path = src_path
                 .parent()
                 .unwrap_or_else(|| Path::new("."))
-                .join(format!("{stem}_{suffix}_{}.mp4", unix_now_secs()));
+                .join(format!("{stem}_{suffix}_{created_unix}.mp4"));
 
             match trim_mp4_lossless(&src_path, &dst_path, start_secs, end_secs, vertical_9_16) {
                 Ok(meta) => {
+                    let thumb_path = rewind::library::thumb_path_for(&clips_folder, &dst_path);
+                    if let Some(parent) = thumb_path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                        rewind::win_ffi::hide_path(parent);
+                    }
+                    if !thumb_path.exists() {
+                        let seek = (meta.duration_secs * 0.15).min(0.5);
+                        let _ = rewind::player::extract_mp4_thumbnail_jpg(&dst_path, &thumb_path, seek);
+                    }
                     let new_title = if vertical_9_16 {
                         format!("{} (9:16)", src_rec.title)
                     } else {
                         format!("{} (Trim)", src_rec.title)
                     };
+                    let Ok(mut g) = core.lock() else {
+                        return IpcResponse::err("Daemon lock failed");
+                    };
                     let _ = g.library.register_clip(
                         &dst_path,
-                        Path::new(&g.config.clips_folder),
+                        &clips_folder,
                         &new_title,
                         &src_rec.game,
                         meta.duration_secs,
@@ -599,7 +623,7 @@ fn handle_ipc_request(
                         meta.height,
                         meta.fps,
                         &meta.codec,
-                        unix_now_secs(),
+                        created_unix,
                     );
                     g.push_event(format!("Exported lossless trim: {new_title}"));
                     IpcResponse::ok_snapshot(g.snapshot(), Some(format!("Saved {new_title}")))
@@ -692,8 +716,9 @@ fn run_capture_loop(core: Arc<Mutex<DaemonCore>>, stop: Arc<AtomicBool>) {
     )> = None;
     let mut game_audio: Option<WasapiTrackStream> = None;
     let mut mic_audio: Option<WasapiTrackStream> = None;
+    let mut active_game_audio_device = String::new();
     let mut active_mic_device = String::new();
-    let mut audio_initialized = false;
+    let mut last_audio_retry = Instant::now() - Duration::from_secs(5);
     let mut tracked_game_hwnd: Option<isize> = None;
     let mut ui_closed_for_game = false;
 
@@ -783,8 +808,8 @@ fn run_capture_loop(core: Arc<Mutex<DaemonCore>>, stop: Arc<AtomicBool>) {
                 active_video_cfg = None;
                 game_audio = None;
                 mic_audio = None;
+                active_game_audio_device.clear();
                 active_mic_device.clear();
-                audio_initialized = false;
                 pace_origin_qpc = 0;
                 pace_frame_count = 0;
                 if let Ok(mut g) = core.lock() {
@@ -824,13 +849,18 @@ fn run_capture_loop(core: Arc<Mutex<DaemonCore>>, stop: Arc<AtomicBool>) {
             pace_frame_count = 0;
         }
 
-        if !audio_initialized {
-            game_audio = WasapiTrackStream::open_system_loopback_fallback();
-            audio_initialized = true;
+        let retry_due = last_audio_retry.elapsed() >= Duration::from_secs(2);
+        let ga_changed = active_game_audio_device != cfg.game_audio_device;
+        let mic_changed = active_mic_device != cfg.mic_device;
+        if ga_changed || (game_audio.is_none() && retry_due) {
+            game_audio = WasapiTrackStream::open_loopback(&cfg.game_audio_device);
+            active_game_audio_device = cfg.game_audio_device.clone();
+            last_audio_retry = Instant::now();
         }
-        if mic_audio.is_none() || active_mic_device != cfg.mic_device {
+        if mic_changed || (mic_audio.is_none() && retry_due) {
             mic_audio = WasapiTrackStream::open_microphone(&cfg.mic_device);
             active_mic_device = cfg.mic_device.clone();
+            last_audio_retry = Instant::now();
         }
 
         let mut new_packets = Vec::new();
@@ -946,8 +976,18 @@ unsafe extern "system" fn tray_wnd_proc(
                     MENU_TOGGLE_REPLAY => {
                         if let Some(core) = TRAY_CORE.get() {
                             if let Ok(mut g) = core.lock() {
-                                g.config.replay_on = !g.config.replay_on;
+                                let on = !g.config.replay_on;
+                                g.config.replay_on = on;
                                 let _ = g.config.save_to_dir(&AppConfig::app_data_dir());
+                                if !on {
+                                    g.ring_buffer.clear();
+                                    g.capture_active = false;
+                                }
+                                g.push_event(if on {
+                                    "Instant Replay enabled"
+                                } else {
+                                    "Instant Replay paused"
+                                });
                             }
                         }
                     }
@@ -1001,6 +1041,7 @@ unsafe extern "system" fn tray_wnd_proc(
                 if let Some(core) = TRAY_CORE.get() {
                     if let Ok(mut g) = core.lock() {
                         g.config.mic_enabled = !g.config.mic_enabled;
+                        let _ = g.config.save_to_dir(&AppConfig::app_data_dir());
                         let state_str = if g.config.mic_enabled { "unmuted" } else { "muted" };
                         g.push_event(format!("Microphone {state_str}"));
                     }
@@ -1176,9 +1217,14 @@ fn run_discord_rpc_loop(core: Arc<Mutex<DaemonCore>>, stop: Arc<AtomicBool>) {
     while !stop.load(Ordering::Acquire) {
         let snap = {
             if let Ok(g) = core.lock() {
+                let app_id = if g.config.discord_app_id.trim().is_empty() {
+                    rewind::config::DEFAULT_DISCORD_APP_ID.to_owned()
+                } else {
+                    g.config.discord_app_id.trim().to_owned()
+                };
                 Some((
                     g.config.discord_rich_presence,
-                    rewind::config::DEFAULT_DISCORD_APP_ID.to_owned(),
+                    app_id,
                     g.manual_source.clone().or_else(|| g.active_game.clone()),
                     g.config.replay_on,
                     g.config.resolution.label().to_owned(),

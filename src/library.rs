@@ -323,7 +323,10 @@ impl ClipLibrary {
             .join(format!("{safe_stem}.{ext}"));
 
         if new_path != old_path {
-            if new_path.exists() {
+            let same_ci = old_path
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&new_path.to_string_lossy());
+            if !same_ci && new_path.exists() {
                 new_path = old_path
                     .parent()
                     .unwrap_or_else(|| Path::new("."))
@@ -529,12 +532,26 @@ pub fn sanitize_filename(name: &str) -> String {
         .chars()
         .map(|c| match c {
             '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            c if c.is_control() => '_',
             _ => c,
         })
         .collect();
     let trimmed = out.trim().trim_matches('.');
     if trimmed.is_empty() {
-        "Rewind_Clip".to_owned()
+        return "Rewind_Clip".to_owned();
+    }
+    let stem_upper = trimmed
+        .split('.')
+        .next()
+        .unwrap_or(trimmed)
+        .trim()
+        .to_ascii_uppercase();
+    const RESERVED: [&str; 22] = [
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    if RESERVED.contains(&stem_upper.as_str()) {
+        format!("{trimmed}_clip")
     } else {
         trimmed.to_owned()
     }
@@ -576,6 +593,13 @@ mod tests {
         let renamed = db.rename_clip(r2.id, "Renamed Clutch").unwrap();
         assert_eq!(renamed.title, "Renamed Clutch");
         assert!(Path::new(&renamed.file_path).exists());
+
+        let case_renamed = db.rename_clip(r2.id, "renamed clutch").unwrap();
+        assert_eq!(case_renamed.title, "renamed clutch");
+        assert!(case_renamed.file_path.ends_with("renamed clutch.mp4"));
+        assert!(Path::new(&case_renamed.file_path).exists());
+        assert_eq!(sanitize_filename("CON"), "CON_clip");
+        assert_eq!(sanitize_filename("aux.mp4"), "aux.mp4_clip");
 
         db.soft_delete_clip(r2.id, 1000).unwrap();
         assert!(db.list_active_clips().unwrap().is_empty());

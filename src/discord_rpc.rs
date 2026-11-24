@@ -41,8 +41,9 @@ impl DiscordRpcClient {
             let path = format!(r"\\.\pipe\discord-ipc-{idx}");
             if let Ok(mut f) = OpenOptions::new().read(true).write(true).open(&path) {
                 let handshake = json!({ "v": 1, "client_id": trimmed }).to_string();
-                if write_frame(&mut f, 0, handshake.as_bytes()).is_ok() {
-                    let _ = read_frame(&mut f);
+                if write_frame(&mut f, 0, handshake.as_bytes()).is_ok()
+                    && matches!(read_frame(&mut f), Some((1, _)))
+                {
                     self.pipe = Some(f);
                     self.connected_client_id = trimmed.to_owned();
                     return true;
@@ -77,7 +78,10 @@ impl DiscordRpcClient {
             self.disconnect();
             return false;
         }
-        let _ = read_frame(f);
+        if !matches!(read_frame(f), Some((1, _))) {
+            self.disconnect();
+            return false;
+        }
         true
     }
 

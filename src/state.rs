@@ -786,8 +786,6 @@ impl RewindUiState {
         self.rename_editing = false;
         self.modal_editor_open = false;
         self.modal_fullscreen = false;
-        self.modal_blur_tex = None;
-        self.modal_blur_requested_at = None;
         self.player_texture = None;
         self.player_frame_seq = 0;
         self.player_ambient_tex = None;

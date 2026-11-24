@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::mem::ManuallyDrop;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -1352,6 +1352,8 @@ pub struct VideoDecoder {
     cmd_tx: Sender<PlayerCmd>,
     shared: Arc<Mutex<PlayerShared>>,
     cancel: Arc<AtomicBool>,
+    last_playing: AtomicBool,
+    last_gain_bits: AtomicU32,
     pool: FrameBufferPool,
     worker: Option<JoinHandle<()>>,
 }
@@ -1387,6 +1389,8 @@ impl VideoDecoder {
             cmd_tx,
             shared,
             cancel,
+            last_playing: AtomicBool::new(true),
+            last_gain_bits: AtomicU32::new(0.85_f32.to_bits()),
             pool,
             worker: Some(worker),
         })
@@ -1397,7 +1401,9 @@ impl VideoDecoder {
     }
 
     pub fn set_playing(&self, playing: bool) {
-        let _ = self.cmd_tx.send(PlayerCmd::SetPlaying(playing));
+        if self.last_playing.swap(playing, Ordering::AcqRel) != playing {
+            let _ = self.cmd_tx.send(PlayerCmd::SetPlaying(playing));
+        }
     }
 
     pub fn seek(&self, secs: f32) {
@@ -1405,7 +1411,11 @@ impl VideoDecoder {
     }
 
     pub fn set_audio_gain(&self, gain: f32) {
-        let _ = self.cmd_tx.send(PlayerCmd::SetGain(gain.clamp(0.0, 1.0)));
+        let clamped = gain.clamp(0.0, 1.0);
+        let prev = f32::from_bits(self.last_gain_bits.swap(clamped.to_bits(), Ordering::AcqRel));
+        if (prev - clamped).abs() > 0.0005 {
+            let _ = self.cmd_tx.send(PlayerCmd::SetGain(clamped));
+        }
     }
 
     pub fn preload_progress(&self) -> (bool, f32) {
@@ -1609,11 +1619,13 @@ fn run_player_worker(
         let mut seek_req: Option<f32> = None;
         let mut stop = false;
 
+        let mut mute_flushed = false;
         let handle_cmd = |cmd: PlayerCmd,
                           playing: &mut bool,
                           audio_gain: &mut f32,
                           seek_req: &mut Option<f32>,
                           stop: &mut bool,
+                          mute_flushed: &mut bool,
                           wave_out: &mut Option<PcmWaveOutPlayer>,
                           play_anchor: &mut Option<(Instant, f32)>,
                           shared: &Arc<Mutex<PlayerShared>>,
@@ -1642,7 +1654,15 @@ fn run_player_worker(
                     }
                 }
                 PlayerCmd::Seek(s) => *seek_req = Some(s),
-                PlayerCmd::SetGain(g) => *audio_gain = g,
+                PlayerCmd::SetGain(g) => {
+                    if *audio_gain > 0.001 && g <= 0.001 {
+                        if let Some(wo) = wave_out {
+                            wo.reset();
+                        }
+                        *mute_flushed = true;
+                    }
+                    *audio_gain = g;
+                }
             }
         };
 
@@ -1655,6 +1675,7 @@ fn run_player_worker(
                         &mut audio_gain,
                         &mut seek_req,
                         &mut stop,
+                        &mut mute_flushed,
                         &mut wave_out,
                         &mut play_anchor,
                         &shared,
@@ -1679,6 +1700,7 @@ fn run_player_worker(
                         &mut audio_gain,
                         &mut seek_req,
                         &mut stop,
+                        &mut mute_flushed,
                         &mut wave_out,
                         &mut play_anchor,
                         &shared,
@@ -1696,6 +1718,7 @@ fn run_player_worker(
                 &mut audio_gain,
                 &mut seek_req,
                 &mut stop,
+                &mut mute_flushed,
                 &mut wave_out,
                 &mut play_anchor,
                 &shared,
@@ -1704,6 +1727,12 @@ fn run_player_worker(
         }
         if stop {
             break;
+        }
+        if mute_flushed {
+            let cur = play_anchor
+                .map(|(inst, origin_pts)| (origin_pts + inst.elapsed().as_secs_f32()).clamp(0.0, total_dur))
+                .unwrap_or_else(|| shared.lock().map(|g| g.pos_secs).unwrap_or(0.0));
+            audio_cursor = (((cur * 48_000.0) as usize) * 4).min(pcm_buf.len()) & !3;
         }
 
         if let Some(s) = seek_req {

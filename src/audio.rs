@@ -20,6 +20,7 @@ use windows::Win32::System::Com::{
 #[link(name = "winmm")]
 extern "system" {
     fn waveInMessage(hwi: usize, umsg: u32, dw1: usize, dw2: usize) -> u32;
+    fn waveOutMessage(hwo: usize, umsg: u32, dw1: usize, dw2: usize) -> u32;
 }
 const DRV_QUERYFUNCTIONINSTANCEID: u32 = 0x0811;
 const DRV_QUERYFUNCTIONINSTANCEIDSIZE: u32 = 0x0812;
@@ -147,6 +148,58 @@ unsafe fn resolve_wavein_endpoint_id(device_hint: &str) -> Option<Vec<u16>> {
     Some(buf)
 }
 
+unsafe fn resolve_waveout_endpoint_id(device_hint: &str) -> Option<Vec<u16>> {
+    let hint = device_hint.trim().to_ascii_lowercase();
+    if hint.is_empty() || hint == "default system output" {
+        return None;
+    }
+    let count = waveOutGetNumDevs();
+    let mut best_idx: Option<u32> = None;
+    for idx in 0..count {
+        let mut caps = WAVEOUTCAPSW::default();
+        if waveOutGetDevCapsW(
+            idx as usize,
+            &mut caps,
+            std::mem::size_of::<WAVEOUTCAPSW>() as u32,
+        ) == 0
+        {
+            let pname = caps.szPname;
+            let name = from_wide_slice(&pname).trim().to_ascii_lowercase();
+            if !name.is_empty() && (name == hint || name.contains(&hint) || hint.contains(&name)) {
+                best_idx = Some(idx);
+                break;
+            }
+        }
+    }
+    let chosen = best_idx?;
+    let mut cb_bytes: u32 = 0;
+    if waveOutMessage(
+        chosen as usize,
+        DRV_QUERYFUNCTIONINSTANCEIDSIZE,
+        (&mut cb_bytes as *mut u32) as usize,
+        0,
+    ) != 0
+        || cb_bytes < 2
+    {
+        return None;
+    }
+    let wchar_len = (cb_bytes as usize).div_ceil(2);
+    let mut buf = vec![0_u16; wchar_len.max(1)];
+    if waveOutMessage(
+        chosen as usize,
+        DRV_QUERYFUNCTIONINSTANCEID,
+        buf.as_mut_ptr() as usize,
+        buf.len() * 2,
+    ) != 0
+    {
+        return None;
+    }
+    if *buf.last().unwrap_or(&1) != 0 {
+        buf.push(0);
+    }
+    Some(buf)
+}
+
 pub struct WasapiTrackStream {
     audio_client: IAudioClient,
     capture_client: IAudioCaptureClient,
@@ -157,11 +210,23 @@ pub struct WasapiTrackStream {
 
 impl WasapiTrackStream {
     pub fn open_system_loopback_fallback() -> Option<Self> {
+        Self::open_loopback("Default System Output")
+    }
+
+    pub fn open_loopback(device_hint: &str) -> Option<Self> {
         unsafe {
             let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
             let enumerator: IMMDeviceEnumerator =
                 CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
-            let dev = enumerator.GetDefaultAudioEndpoint(eRender, eMultimedia).ok()?;
+            let trimmed = device_hint.trim();
+            let dev: Option<IMMDevice> =
+                if !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("Default System Output") {
+                    resolve_waveout_endpoint_id(trimmed)
+                        .and_then(|id| enumerator.GetDevice(PCWSTR(id.as_ptr())).ok())
+                } else {
+                    None
+                };
+            let dev = dev.or_else(|| enumerator.GetDefaultAudioEndpoint(eRender, eMultimedia).ok())?;
             let client: IAudioClient = dev.Activate(CLSCTX_ALL, None).ok()?;
             let fmt = pcm_48k_format(2);
             let flags = AUDCLNT_STREAMFLAGS_LOOPBACK

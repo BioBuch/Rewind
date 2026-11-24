@@ -233,17 +233,28 @@ pub fn render_app(ctx: &egui::Context, state: &mut RewindUiState) {
     render_top_bar(ctx, state, &mut pop, now_secs, flash_alpha);
     render_sidebar(ctx, state);
 
+    let modal_blocking = state.selected_clip_id.is_some()
+        || state.rename_modal_clip.is_some()
+        || state.show_close_recording_notice
+        || !state.snapshot.config.onboarding_completed
+        || state.tour_step.is_some();
+
     egui::CentralPanel::default()
         .frame(
             egui::Frame::none()
                 .fill(Color32::TRANSPARENT)
                 .inner_margin(Margin::symmetric(24.0, 18.0)),
         )
-        .show(ctx, |ui| match state.active_tab {
-            NavTab::Home => render_home(ui, state, &mut pop, now_secs),
-            NavTab::AllClips | NavTab::Favorites => render_library(ui, state, &mut pop, now_secs),
-            NavTab::Folders => render_folders(ui, state),
-            NavTab::Settings => render_settings(ui, state, &mut pop, now_secs),
+        .show(ctx, |ui| {
+            if modal_blocking {
+                ui.disable();
+            }
+            match state.active_tab {
+                NavTab::Home => render_home(ui, state, &mut pop, now_secs),
+                NavTab::AllClips | NavTab::Favorites => render_library(ui, state, &mut pop, now_secs),
+                NavTab::Folders => render_folders(ui, state),
+                NavTab::Settings => render_settings(ui, state, &mut pop, now_secs),
+            }
         });
 
     let popover_rect = render_active_popover(ctx, state, pop.anchor, now_secs);
@@ -325,7 +336,12 @@ fn smooth_bounce_scroll(ui: &mut Ui, id_source: &str, add_contents: impl FnOnce(
     let id = Id::new(("smooth_bounce_scroll", id_source));
     let now = ui.input(|i| i.time);
     let avail = ui.available_rect_before_wrap();
-    let hovered = ui.rect_contains_pointer(avail);
+    let top_layer_is_base = ui
+        .input(|i| i.pointer.hover_pos())
+        .and_then(|p| ui.ctx().layer_id_at(p))
+        .map(|l| matches!(l.order, Order::Background | Order::Middle))
+        .unwrap_or(true);
+    let hovered = ui.is_enabled() && top_layer_is_base && ui.rect_contains_pointer(avail);
 
     let mut s = ui.ctx().data_mut(|d| {
         d.get_temp::<BounceScrollState>(id).unwrap_or(BounceScrollState {
@@ -3917,7 +3933,7 @@ fn render_clip_modal(ctx: &egui::Context, state: &mut RewindUiState, now_secs: f
                     paint_preload_overlay(ui.painter(), video_rect, preload_pct, ac);
                 }
 
-                render_player_controls_overlay(ui, state, screen, screen, dur, ac, hud_alpha);
+                render_player_controls_overlay(ui, state, screen, video_rect, dur, ac, hud_alpha);
             });
         return;
     }
@@ -5889,6 +5905,9 @@ fn render_player_controls_overlay(
             );
             if sp_resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
                 state.player_muted = !state.player_muted;
+                if !state.player_muted && state.player_volume <= 0.01 {
+                    state.player_volume = 0.85;
+                }
             }
 
             ui.allocate_ui(Vec2::new(82.0, 18.0), |ui| {

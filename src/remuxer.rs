@@ -599,6 +599,19 @@ fn mux_packets_to_mkv(
     codec: VideoCodec,
     separate_audio_tracks: bool,
 ) -> Result<(), String> {
+    if !packets.iter().any(|p| p.track == PacketTrack::Video) {
+        return Err("No video packets in snapshot".to_owned());
+    }
+    let mut ordered: Vec<&EncodedPacket> = packets.iter().collect();
+    ordered.sort_by_key(|p| p.pts_100ns);
+    let base_pts = ordered.first().map(|p| p.pts_100ns).unwrap_or(0);
+    let max_end_pts = ordered
+        .iter()
+        .map(|p| p.pts_100ns.saturating_add(p.duration_100ns))
+        .max()
+        .unwrap_or(base_pts);
+    let duration_ms = (((max_end_pts.saturating_sub(base_pts)).max(10_000)) as f64) / 10_000.0;
+
     let mut out = Vec::with_capacity(256 * 1024);
 
     let mut ebml = Vec::new();
@@ -617,13 +630,7 @@ fn mux_packets_to_mkv(
     ebml_uint(&mut info, 0x2AD7B1, 1_000_000);
     ebml_str(&mut info, 0x4D80, b"Rewind Lossless Remuxer");
     ebml_str(&mut info, 0x5741, b"Rewind");
-    let max_pts_ms = packets
-        .iter()
-        .map(|p| (p.pts_100ns + p.duration_100ns) / 10_000)
-        .max()
-        .unwrap_or(1000)
-        .max(1) as f64;
-    ebml_f64(&mut info, 0x4489, max_pts_ms);
+    ebml_f64(&mut info, 0x4489, duration_ms);
     ebml_master(&mut seg, 0x1549A966, &info);
 
     let mut tracks = Vec::new();
@@ -645,13 +652,14 @@ fn mux_packets_to_mkv(
     ebml_master(&mut tracks, 0xAE, &v_entry);
 
     let has_game_audio = if separate_audio_tracks {
-        packets.iter().any(|p| p.track == PacketTrack::GameAudio)
+        ordered.iter().any(|p| p.track == PacketTrack::GameAudio)
     } else {
-        packets
+        ordered
             .iter()
             .any(|p| p.track == PacketTrack::GameAudio || p.track == PacketTrack::MicAudio)
     };
-    let has_mic_audio = separate_audio_tracks && packets.iter().any(|p| p.track == PacketTrack::MicAudio);
+    let has_mic_audio =
+        separate_audio_tracks && ordered.iter().any(|p| p.track == PacketTrack::MicAudio);
 
     if has_game_audio {
         tracks.extend_from_slice(&build_mkv_audio_track(2));
@@ -662,15 +670,27 @@ fn mux_packets_to_mkv(
     ebml_master(&mut seg, 0x1654AE6B, &tracks);
 
     let mut cluster = Vec::new();
-    ebml_uint(&mut cluster, 0xE7, 0);
-    for p in packets {
+    let mut cluster_start_ms: i64 = 0;
+    let mut cluster_open = false;
+
+    for p in ordered {
+        let rel_ms = (p.pts_100ns.saturating_sub(base_pts).max(0)) / 10_000;
+        if !cluster_open || rel_ms - cluster_start_ms > 20_000 {
+            if cluster_open {
+                ebml_master(&mut seg, 0x1F43B675, &cluster);
+                cluster.clear();
+            }
+            cluster_start_ms = rel_ms;
+            ebml_uint(&mut cluster, 0xE7, cluster_start_ms as u64);
+            cluster_open = true;
+        }
         let track_num: u8 = match p.track {
             PacketTrack::Video => 1,
             PacketTrack::GameAudio => 2,
             PacketTrack::MicAudio if separate_audio_tracks => 3,
             PacketTrack::MicAudio => 2,
         };
-        let ts_ms = ((p.pts_100ns / 10_000).clamp(0, i16::MAX as i64)) as i16;
+        let ts_ms = (rel_ms - cluster_start_ms).clamp(i16::MIN as i64, i16::MAX as i64) as i16;
         let flags: u8 = if p.is_idr_keyframe || p.track != PacketTrack::Video {
             0x80
         } else {
@@ -683,10 +703,17 @@ fn mux_packets_to_mkv(
         blk.extend_from_slice(&p.data);
         ebml_bin(&mut cluster, 0xA3, &blk);
     }
-    ebml_master(&mut seg, 0x1F43B675, &cluster);
+    if cluster_open {
+        ebml_master(&mut seg, 0x1F43B675, &cluster);
+    }
     ebml_master(&mut out, 0x18538067, &seg);
 
-    fs::write(path, out).map_err(|e| format!("write mkv: {e}"))
+    let tmp_path = path.with_extension("mkv.tmp");
+    fs::write(&tmp_path, out).map_err(|e| format!("write mkv: {e}"))?;
+    if path.exists() {
+        let _ = fs::remove_file(path);
+    }
+    fs::rename(&tmp_path, path).map_err(|e| format!("rename mkv: {e}"))
 }
 
 fn build_mkv_audio_track(num: u64) -> Vec<u8> {
@@ -1371,7 +1398,17 @@ pub fn probe_mp4_metadata(path: &Path) -> Result<Mp4Metadata, String> {
     } else {
         movie_dur as f32 / movie_ts as f32
     };
-    let fps = if duration_secs > 0.05 {
+    let fps = if vid.samples.len() >= 2 {
+        let mut ticks: Vec<u32> = vid.samples[..vid.samples.len() - 1]
+            .iter()
+            .map(|s| s.duration_ticks.max(1))
+            .collect();
+        ticks.sort_unstable();
+        let median_ticks = ticks[ticks.len() / 2].max(1);
+        (vid.timescale as f32 / median_ticks as f32)
+            .round()
+            .clamp(1.0, 240.0) as u32
+    } else if duration_secs > 0.05 {
         (vid.samples.len() as f32 / duration_secs).round().clamp(1.0, 240.0) as u32
     } else {
         60
@@ -1900,5 +1937,35 @@ mod tests {
         } else {
             VideoCodec::H264
         }
+    }
+
+    #[test]
+    fn mkv_mux_normalizes_uptime_pts_and_multi_cluster_duration() {
+        let dir = std::env::temp_dir().join("rewind_mkv_uptime_test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let mkv = dir.join("uptime.mkv");
+
+        let base_qpc: i64 = 36_000_000 * 10_000;
+        let mut pkts = synthetic_h264_annexb_packets(45, 30);
+        for p in &mut pkts {
+            p.pts_100ns += base_qpc;
+            p.dts_100ns += base_qpc;
+        }
+        mux_packets_to_mkv(&mkv, &pkts, 1920, 1080, 30, VideoCodec::H264, true).unwrap();
+        let bytes = fs::read(&mkv).unwrap();
+        assert!(bytes.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]));
+        let dur_pos = bytes
+            .windows(3)
+            .position(|w| w == [0x44, 0x89, 0x88])
+            .expect("missing EBML duration element");
+        let dur_ms = f64::from_be_bytes(bytes[dur_pos + 3..dur_pos + 11].try_into().unwrap());
+        assert!(
+            (dur_ms - 45_000.0).abs() < 1.0,
+            "MKV segment duration must reflect relative clip length (~45000ms), got {dur_ms}"
+        );
+        let clusters = bytes.windows(4).filter(|w| *w == [0x1F, 0x43, 0xB6, 0x75]).count();
+        assert!(clusters >= 3, "expected >=3 clusters for 45s MKV, got {clusters}");
+        let _ = fs::remove_dir_all(&dir);
     }
 }

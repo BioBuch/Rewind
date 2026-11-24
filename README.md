@@ -52,6 +52,10 @@ Run tests with:
 cargo test --lib --bins
 ```
 
+## Disclaimer
+
+Rewind only captures the desktop display using standard Windows APIs (`WGC` / `DXGI Desktop Duplication`) and never reads game memory, injects DLLs, or hooks DirectX. However, because third-party kernel anti-cheats (such as Riot Vanguard or Easy Anti-Cheat) operate at their own discretion and release binaries are currently unsigned, **use Rewind at your own risk — Rewind and its contributors are not responsible for any game or account bans.**
+
 ## Support & License
 
 - Support Rewind on [Ko-fi](https://ko-fi.com/rewindapp).

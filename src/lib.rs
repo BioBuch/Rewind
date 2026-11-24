@@ -3,6 +3,7 @@ pub mod audio;
 pub mod capture;
 pub mod config;
 pub mod discord_rpc;
+pub mod enhance;
 pub mod game_detector;
 pub mod game_icons;
 pub mod ipc;

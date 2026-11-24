@@ -57,25 +57,6 @@ fn sanitize_config_for_hardware(cfg: &mut AppConfig, hw: &HardwareInfo) {
     cfg.buffer_mode = BufferMode::SystemRam;
 }
 
-fn recorder_settings_changed(a: &AppConfig, b: &AppConfig) -> bool {
-    a.clip_length != b.clip_length
-        || a.buffer_mode != b.buffer_mode
-        || a.resolution != b.resolution
-        || a.fps != b.fps
-        || a.codec != b.codec
-        || a.encoder_preference != b.encoder_preference
-        || a.rate_control != b.rate_control
-        || a.cqp_qp != b.cqp_qp
-        || a.bitrate_mbps != b.bitrate_mbps
-        || a.gop_secs != b.gop_secs
-        || a.container != b.container
-        || a.game_audio_device != b.game_audio_device
-        || a.mic_device != b.mic_device
-        || a.mic_enabled != b.mic_enabled
-        || a.separate_audio_tracks != b.separate_audio_tracks
-        || a.auto_start_capture != b.auto_start_capture
-}
-
 use rewind::ring_buffer::{CompressedRingBuffer, PacketTrack};
 use rewind::win_ffi::{
     create_hicon_from_rgba, current_process_ram_mb, destroy_hicon, is_rewind_ui_open,
@@ -431,8 +412,11 @@ fn handle_ipc_request(
             let Ok(mut g) = core.lock() else {
                 return IpcResponse::err("Daemon lock failed");
             };
+            if g.manual_source == src {
+                return IpcResponse::ok_snapshot(g.snapshot(), None);
+            }
             g.manual_source = src;
-            IpcResponse::ok_snapshot(g.snapshot(), None)
+            IpcResponse::ok_snapshot(g.snapshot(), Some("Capture source updated".to_owned()))
         }
         IpcRequest::SaveClipNow => match trigger_save_clip(core) {
             Ok(msg) => {
@@ -452,7 +436,6 @@ fn handle_ipc_request(
             let prev_accent = g.config.effective_accent_color();
             let prev_start_win = g.config.start_with_windows;
             sanitize_config_for_hardware(&mut new_cfg, &g.hardware);
-            let needs_restart = recorder_settings_changed(&g.config, &new_cfg);
             let hotkeys_changed = g.config.hotkey_save_clip != new_cfg.hotkey_save_clip
                 || g.config.hotkey_toggle_mic != new_cfg.hotkey_toggle_mic
                 || g.config.hotkey_add_bookmark != new_cfg.hotkey_add_bookmark;
@@ -492,41 +475,6 @@ fn handle_ipc_request(
             let auto_del = g.config.auto_delete_oldest;
             let _ = g.library.enforce_quota(&clips_root, max_bytes, auto_del);
 
-            if needs_restart {
-                let keep_desktop = g.manual_source.as_deref() == Some("Desktop");
-                let mut resp = IpcResponse::ok_snapshot(
-                    g.snapshot(),
-                    Some("Recorder settings updated — restarting daemon...".to_owned()),
-                );
-                resp.restarting = true;
-                drop(g);
-                let stop_c = stop.clone();
-                thread::spawn(move || {
-                    thread::sleep(Duration::from_millis(120));
-                    if let Ok(cur_exe) = std::env::current_exe() {
-                        let mut cmd = Command::new(cur_exe);
-                        cmd.arg("--restart");
-                        if keep_desktop {
-                            cmd.arg("--source=Desktop");
-                        }
-                        let _ = cmd.spawn();
-                    }
-                    stop_c.store(true, Ordering::Release);
-                    let hwnd_val = TRAY_HWND.load(Ordering::Acquire);
-                    if hwnd_val != 0 {
-                        unsafe {
-                            let _ = PostMessageW(
-                                HWND(hwnd_val as *mut _),
-                                WM_CLOSE,
-                                WPARAM(0),
-                                LPARAM(0),
-                            );
-                        }
-                    }
-                });
-                return resp;
-            }
-
             if new_accent != prev_accent {
                 let hwnd_val = TRAY_HWND.load(Ordering::Acquire);
                 if hwnd_val != 0 {
@@ -553,7 +501,7 @@ fn handle_ipc_request(
                     }
                 }
             }
-            IpcResponse::ok_snapshot(g.snapshot(), None)
+            IpcResponse::ok_snapshot(g.snapshot(), Some("Settings applied".to_owned()))
         }
         IpcRequest::ToggleFavorite { id } => {
             let Ok(mut g) = core.lock() else {
@@ -730,7 +678,18 @@ fn handle_ipc_request(
 
 fn run_capture_loop(core: Arc<Mutex<DaemonCore>>, stop: Arc<AtomicBool>) {
     let mut pipeline: Option<GpuCapturePipeline> = None;
-    let mut active_video_cfg: Option<(u32, u32, u32, VideoCodec, u32, u32)> = None;
+    let mut active_video_cfg: Option<(
+        u32,
+        u32,
+        u32,
+        VideoCodec,
+        rewind::config::RateControl,
+        u32,
+        u32,
+        u32,
+        rewind::config::EncoderPreference,
+        rewind::config::SharpenLevel,
+    )> = None;
     let mut game_audio: Option<WasapiTrackStream> = None;
     let mut mic_audio: Option<WasapiTrackStream> = None;
     let mut active_mic_device = String::new();
@@ -842,8 +801,12 @@ fn run_capture_loop(core: Arc<Mutex<DaemonCore>>, stop: Arc<AtomicBool>) {
             ch,
             cfg.fps.as_u32(),
             cfg.codec,
+            cfg.rate_control,
             cfg.cqp_qp,
             cfg.bitrate_mbps,
+            cfg.gop_secs,
+            cfg.encoder_preference,
+            cfg.capture_sharpen,
         );
         if pipeline.is_none() || active_video_cfg != Some(vid_cfg) {
             drop(pipeline.take());
@@ -1072,7 +1035,7 @@ fn main() {
     let mutex_name = to_wide_null("Local\\RewindCaptureDaemonSingleton");
     let mutex_handle = unsafe {
         let mut acquired = None;
-        let max_attempts = if is_restart { 50 } else { 1 };
+        let max_attempts = if is_restart { 100 } else { 1 };
         for attempt in 0..max_attempts {
             let h = CreateMutexW(None, false, PCWSTR(mutex_name.as_ptr()));
             if windows::Win32::Foundation::GetLastError() == ERROR_ALREADY_EXISTS {
@@ -1216,7 +1179,7 @@ fn run_discord_rpc_loop(core: Arc<Mutex<DaemonCore>>, stop: Arc<AtomicBool>) {
                 Some((
                     g.config.discord_rich_presence,
                     rewind::config::DEFAULT_DISCORD_APP_ID.to_owned(),
-                    g.active_game.clone(),
+                    g.manual_source.clone().or_else(|| g.active_game.clone()),
                     g.config.replay_on,
                     g.config.resolution.label().to_owned(),
                     g.config.fps.as_u32(),
@@ -1248,11 +1211,11 @@ fn run_discord_rpc_loop(core: Arc<Mutex<DaemonCore>>, stop: Arc<AtomicBool>) {
             }
         }
 
-        for _ in 0..20 {
+        for _ in 0..5 {
             if stop.load(Ordering::Acquire) {
                 break;
             }
-            thread::sleep(Duration::from_millis(200));
+            thread::sleep(Duration::from_millis(50));
         }
     }
 

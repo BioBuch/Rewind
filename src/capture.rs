@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::mem::ManuallyDrop;
 
+use crate::enhance::GpuSharpener;
+
 use windows::core::{Interface, GUID, VARIANT};
 use windows::Graphics::Capture::{
     Direct3D11CaptureFramePool, GraphicsCaptureItem, GraphicsCaptureSession,
@@ -320,6 +322,8 @@ pub struct GpuCapturePipeline {
     started: bool,
     last_submitted_slot: i64,
     in_flight_abs_pts: VecDeque<i64>,
+    sharpen_strength: f32,
+    sharpener: Option<GpuSharpener>,
 }
 
 impl GpuCapturePipeline {
@@ -497,6 +501,8 @@ impl GpuCapturePipeline {
                 started: false,
                 last_submitted_slot: -1,
                 in_flight_abs_pts: VecDeque::with_capacity(16),
+                sharpen_strength: cfg.capture_sharpen.strength(),
+                sharpener: None,
             })
         }
     }
@@ -640,10 +646,35 @@ impl GpuCapturePipeline {
                     nv_slot = (nv_slot + 1) % pool_len;
                 }
                 if got_new_frame || !self.has_valid_nv12 {
+                    if self.sharpen_strength > 0.0 {
+                        if let Some(src) = &self.last_bgra_tex {
+                            let mut desc = D3D11_TEXTURE2D_DESC::default();
+                            src.GetDesc(&mut desc);
+                            let need_new = self
+                                .sharpener
+                                .as_ref()
+                                .map(|s| s.dimensions() != (desc.Width, desc.Height))
+                                .unwrap_or(true);
+                            if need_new {
+                                self.sharpener = GpuSharpener::new(
+                                    &self.device,
+                                    desc.Width,
+                                    desc.Height,
+                                    self.sharpen_strength,
+                                );
+                                self.vp_in_view = None;
+                            }
+                        }
+                    }
                     if self.vp_in_view.is_none() {
                         if let (Some(src), Some(vdev), Some(venum)) =
                             (&self.last_bgra_tex, &self.vp_device, &self.vp_enum)
                         {
+                            let vp_src = if let Some(sh) = &self.sharpener {
+                                sh.apply(&self.context, src)
+                            } else {
+                                src
+                            };
                             let in_desc = D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC {
                                 FourCC: 0,
                                 ViewDimension: D3D11_VPIV_DIMENSION_TEXTURE2D,
@@ -657,12 +688,14 @@ impl GpuCapturePipeline {
                             };
                             let mut iv = None;
                             if vdev
-                                .CreateVideoProcessorInputView(src, venum, &in_desc, Some(&mut iv))
+                                .CreateVideoProcessorInputView(vp_src, venum, &in_desc, Some(&mut iv))
                                 .is_ok()
                             {
                                 self.vp_in_view = iv;
                             }
                         }
+                    } else if let (Some(src), Some(sh)) = (&self.last_bgra_tex, &self.sharpener) {
+                        let _ = sh.apply(&self.context, src);
                     }
                     let (ref dst_tex, ref out_v) = self.nv12_pool[nv_slot];
                     if let (Some(vctx), Some(vproc), Some(in_v)) =

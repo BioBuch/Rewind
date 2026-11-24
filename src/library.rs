@@ -107,6 +107,10 @@ impl ClipLibrary {
     ) -> Result<ClipRecord, String> {
         let size_bytes = fs::metadata(file_path).map(|m| m.len()).unwrap_or(0);
         let thumb_path = thumb_path_for(clips_root, file_path);
+        if let Some(parent) = thumb_path.parent() {
+            let _ = fs::create_dir_all(parent);
+            crate::win_ffi::hide_path(parent);
+        }
         if !thumb_path.exists() {
             let seek = (duration_secs * 0.15).min(0.5);
             let _ = extract_mp4_thumbnail_jpg(file_path, &thumb_path, seek);
@@ -154,9 +158,16 @@ impl ClipLibrary {
 
     pub fn sync_folder(&self, clips_root: &Path) -> Result<(), String> {
         let _ = fs::create_dir_all(clips_root);
+        let thumb_dir = clips_root.join(".thumbnails");
+        if thumb_dir.exists() {
+            crate::win_ffi::hide_path(&thumb_dir);
+        }
         let existing = self.list_all_including_deleted()?;
         for rec in &existing {
             if !Path::new(&rec.file_path).exists() {
+                if !rec.thumb_path.is_empty() {
+                    let _ = fs::remove_file(&rec.thumb_path);
+                }
                 let _ = self
                     .conn
                     .execute("DELETE FROM clips WHERE id = ?1", params![rec.id]);
@@ -196,6 +207,30 @@ impl ClipLibrary {
                 None => (0.0, 1920, 1080, 60, "MP4".to_owned()),
             };
             let _ = self.register_clip(&file, clips_root, &title, &game, dur, w, h, fps, &codec, created);
+        }
+        self.prune_orphan_thumbnails(clips_root)?;
+        Ok(())
+    }
+
+    fn prune_orphan_thumbnails(&self, clips_root: &Path) -> Result<(), String> {
+        let thumb_dir = clips_root.join(".thumbnails");
+        if !thumb_dir.is_dir() {
+            return Ok(());
+        }
+        let mut live_thumbs: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+        for rec in self.list_all_including_deleted()? {
+            if !rec.thumb_path.is_empty() {
+                live_thumbs.insert(PathBuf::from(&rec.thumb_path));
+            }
+            live_thumbs.insert(thumb_path_for(clips_root, Path::new(&rec.file_path)));
+        }
+        if let Ok(entries) = fs::read_dir(&thumb_dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_file() && !live_thumbs.contains(&p) {
+                    let _ = fs::remove_file(p);
+                }
+            }
         }
         Ok(())
     }

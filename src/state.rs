@@ -178,6 +178,8 @@ pub struct RewindUiState {
     pub modal_opened_at: f64,
     pub modal_fullscreen: bool,
     pub viewport_fullscreen_applied: bool,
+    pub modal_blur_tex: Option<TextureHandle>,
+    pub modal_blur_requested_at: Option<f64>,
     pub clip_context_menu: Option<(i64, egui::Pos2)>,
     pub show_close_recording_notice: bool,
     pub allow_close_now: bool,
@@ -186,6 +188,8 @@ pub struct RewindUiState {
     pub decoder: Option<VideoDecoder>,
     pub player_texture: Option<TextureHandle>,
     pub player_frame_seq: u64,
+    pub player_ambient_tex: Option<TextureHandle>,
+    pub player_ambient_seq: u64,
     pub last_player_frame: Option<Arc<ColorImage>>,
     pub player_playing: bool,
     pub player_pos_secs: f32,
@@ -216,6 +220,8 @@ pub struct RewindUiState {
 
     pub restarting_from_pid: Option<u32>,
     pub daemon_restart_started_at: f64,
+    pub pending_config_update: Option<AppConfig>,
+    pub pending_config_at: f64,
 
     pub last_seen_flash_counter: u64,
     pub clip_flash_start: Option<f64>,
@@ -296,6 +302,8 @@ impl RewindUiState {
             decoder: None,
             player_texture: None,
             player_frame_seq: 0,
+            player_ambient_tex: None,
+            player_ambient_seq: 0,
             last_player_frame: None,
             player_playing: false,
             player_pos_secs: 0.0,
@@ -312,6 +320,8 @@ impl RewindUiState {
             rename_modal_clip: None,
             rename_modal_just_opened: false,
             modal_editor_open: false,
+            modal_blur_tex: None,
+            modal_blur_requested_at: None,
 
             bg_cache_key: None,
             bg_texture: None,
@@ -326,6 +336,8 @@ impl RewindUiState {
 
             restarting_from_pid: None,
             daemon_restart_started_at: 0.0,
+            pending_config_update: None,
+            pending_config_at: 0.0,
 
             last_seen_flash_counter,
             clip_flash_start: None,
@@ -361,7 +373,16 @@ impl RewindUiState {
         } else if snap.auto_close_ui_counter < self.last_seen_auto_close_counter {
             self.last_seen_auto_close_counter = snap.auto_close_ui_counter;
         }
+        let preserve_cfg = self.pending_config_update.is_some();
+        let local_cfg = if preserve_cfg {
+            Some(self.snapshot.config.clone())
+        } else {
+            None
+        };
         self.snapshot = snap;
+        if let Some(cfg) = local_cfg {
+            self.snapshot.config = cfg;
+        }
     }
 
     pub fn send_async(&self, req: IpcRequest) {
@@ -400,7 +421,13 @@ impl RewindUiState {
             }
             Err(err) => {
                 self.daemon_connected = false;
-                self.status_banner = Some((err, now_secs));
+                if self.restarting_from_pid.is_some() {
+                    if let IpcRequest::UpdateConfig(cfg) = req {
+                        self.pending_config_update = Some(cfg);
+                    }
+                } else {
+                    self.status_banner = Some((err, now_secs));
+                }
             }
         }
     }
@@ -443,8 +470,12 @@ impl RewindUiState {
                             if snap.daemon_pid != 0 && snap.daemon_pid != old_pid {
                                 self.restarting_from_pid = None;
                                 self.apply_snapshot(snap, now_secs);
-                                self.status_banner =
-                                    Some(("Daemon is back online".to_owned(), now_secs));
+                                if let Some(pending) = self.pending_config_update.take() {
+                                    self.send_sync(IpcRequest::UpdateConfig(pending), now_secs);
+                                } else {
+                                    self.status_banner =
+                                        Some(("Daemon is back online".to_owned(), now_secs));
+                                }
                             } else {
                                 self.snapshot.replay_on = false;
                                 self.snapshot.capture_active = false;
@@ -473,6 +504,17 @@ impl RewindUiState {
 
         if self.restarting_from_pid.is_some() && (now_secs - self.daemon_restart_started_at) > 8.0 {
             self.restarting_from_pid = None;
+        }
+        if self.restarting_from_pid.is_none() && !ctx.input(|i| i.pointer.primary_down()) {
+            if self.pending_config_update.is_some() {
+                if (now_secs - self.pending_config_at) >= 0.35 {
+                    if let Some(pending) = self.pending_config_update.take() {
+                        self.send_sync(IpcRequest::UpdateConfig(pending), now_secs);
+                    }
+                } else {
+                    ctx.request_repaint_after(std::time::Duration::from_millis(80));
+                }
+            }
         }
         if let Some(rx) = &self.update_rx {
             if let Ok(res) = rx.try_recv() {
@@ -581,6 +623,10 @@ impl RewindUiState {
 
     pub fn push_config_update(&mut self, now_secs: f64) {
         let cfg = self.snapshot.config.clone();
+        if self.restarting_from_pid.is_some() {
+            self.pending_config_update = Some(cfg);
+            return;
+        }
         self.send_sync(IpcRequest::UpdateConfig(cfg), now_secs);
     }
 
@@ -723,6 +769,10 @@ impl RewindUiState {
     }
 
     pub fn open_clip_modal(&mut self, clip: &ClipRecord, now_secs: f64) {
+        if self.selected_clip_id.is_none() {
+            self.modal_blur_tex = None;
+            self.modal_blur_requested_at = None;
+        }
         self.selected_clip_id = Some(clip.id);
         self.modal_opened_at = now_secs;
         self.player_pos_secs = 0.0;
@@ -736,8 +786,12 @@ impl RewindUiState {
         self.rename_editing = false;
         self.modal_editor_open = false;
         self.modal_fullscreen = false;
+        self.modal_blur_tex = None;
+        self.modal_blur_requested_at = None;
         self.player_texture = None;
         self.player_frame_seq = 0;
+        self.player_ambient_tex = None;
+        self.player_ambient_seq = 0;
         self.last_player_frame = None;
         let dec = VideoDecoder::open(Path::new(&clip.file_path), clip.duration_secs).ok();
         if let Some(d) = &dec {
@@ -762,6 +816,8 @@ impl RewindUiState {
         self.player_playing = false;
         self.modal_editor_open = false;
         self.modal_fullscreen = false;
+        self.modal_blur_tex = None;
+        self.modal_blur_requested_at = None;
         if self.viewport_fullscreen_applied {
             set_active_window_borderless_fullscreen(false);
             self.viewport_fullscreen_applied = false;

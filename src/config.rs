@@ -308,6 +308,34 @@ impl AccentColor {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum SharpenLevel {
+    #[default]
+    Off,
+    Light,
+    Medium,
+}
+
+impl SharpenLevel {
+    pub const ALL: [Self; 3] = [Self::Off, Self::Light, Self::Medium];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Light => "Light",
+            Self::Medium => "Medium",
+        }
+    }
+
+    pub fn strength(self) -> f32 {
+        match self {
+            Self::Off => 0.0,
+            Self::Light => 0.30,
+            Self::Medium => 0.55,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
@@ -358,6 +386,8 @@ pub struct AppConfig {
     pub clip_post_buffer_secs: u32,
     #[serde(default)]
     pub suppress_recording_close_prompt: bool,
+    #[serde(default)]
+    pub capture_sharpen: SharpenLevel,
 }
 
 impl Default for AppConfig {
@@ -404,6 +434,7 @@ impl Default for AppConfig {
             discord_app_id: DEFAULT_DISCORD_APP_ID.to_owned(),
             clip_post_buffer_secs: 0,
             suppress_recording_close_prompt: false,
+            capture_sharpen: SharpenLevel::Off,
         }
     }
 }

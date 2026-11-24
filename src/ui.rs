@@ -64,12 +64,12 @@ impl UiPalette {
         Self {
             bar_bg: Color32::from_rgb(13, 17, 24),
             sidebar_bg: Color32::from_rgb(12, 15, 22),
-            card_bg: Color32::from_rgb(19, 24, 33),
-            card_hover: Color32::from_rgb(25, 31, 43),
-            pill_bg: Color32::from_rgb(23, 29, 40),
-            popover_bg: Color32::from_rgb(22, 27, 37),
-            border: Color32::from_rgb(34, 41, 56),
-            border_bright: Color32::from_rgb(54, 65, 86),
+            card_bg: Color32::from_rgb(20, 22, 28),
+            card_hover: Color32::from_rgb(28, 31, 39),
+            pill_bg: Color32::from_rgb(24, 27, 34),
+            popover_bg: Color32::from_rgb(20, 22, 28),
+            border: Color32::from_rgba_premultiplied(20, 20, 20, 20),
+            border_bright: Color32::from_rgba_premultiplied(32, 32, 32, 32),
             icon_box_bg: Color32::from_rgb(26, 33, 47),
             divider_col: Color32::from_rgb(28, 34, 46),
             track_bg: Color32::from_rgb(38, 45, 59),
@@ -108,8 +108,8 @@ impl UiPalette {
                 ab.saturating_add(14),
                 238,
             ),
-            border: Color32::from_rgba_unmultiplied(255, 255, 255, 24),
-            border_bright: Color32::from_rgba_unmultiplied(255, 255, 255, 52),
+            border: Color32::from_rgba_premultiplied(20, 20, 20, 20),
+            border_bright: Color32::from_rgba_premultiplied(32, 32, 32, 32),
             icon_box_bg: Color32::from_rgba_unmultiplied(255, 255, 255, 16),
             divider_col: Color32::from_rgba_unmultiplied(255, 255, 255, 18),
             track_bg: Color32::from_rgba_unmultiplied(255, 255, 255, 34),
@@ -345,32 +345,40 @@ fn smooth_bounce_scroll(ui: &mut Ui, id_source: &str, add_contents: impl FnOnce(
         ui.input(|i| {
             let down = i.pointer.primary_down() && not_dragging_widget;
             let dy = if down { i.pointer.delta().y } else { 0.0 };
-            (i.smooth_scroll_delta.y, dy, down)
+            let wy = if i.raw_scroll_delta.y.abs() > 0.01 {
+                i.raw_scroll_delta.y
+            } else {
+                i.smooth_scroll_delta.y
+            };
+            (wy, dy, down)
         })
     } else {
         (0.0, 0.0, false)
     };
-    let scroll_delta = wheel_y * 1.15 + drag_y;
+    let scroll_delta = wheel_y * 1.35 + drag_y;
     if scroll_delta.abs() > 0.01 {
         if wheel_y.abs() > 0.01 {
-            ui.ctx().input_mut(|i| i.smooth_scroll_delta.y = 0.0);
+            ui.ctx().input_mut(|i| {
+                i.raw_scroll_delta.y = 0.0;
+                i.smooth_scroll_delta.y = 0.0;
+            });
         }
         s.target_y -= scroll_delta;
         if s.target_y < 0.0 {
             let excess = -s.target_y;
             s.target_y = 0.0;
-            s.overscroll = (s.overscroll + excess * 0.42).min(56.0);
+            s.overscroll = (s.overscroll + excess * 0.35).min(48.0);
         } else if s.target_y > s.last_max_y {
             let excess = s.target_y - s.last_max_y;
             s.target_y = s.last_max_y;
-            s.overscroll = (s.overscroll - excess * 0.42).max(-56.0);
+            s.overscroll = (s.overscroll - excess * 0.35).max(-48.0);
         }
     }
 
-    let k = 1.0 - (-16.0 * dt).exp();
+    let k = 1.0 - (-22.0 * dt).exp();
     s.current_y += (s.target_y - s.current_y) * k;
     if !pointer_down {
-        s.overscroll *= (-11.0 * dt).exp();
+        s.overscroll *= (-14.0 * dt).exp();
     }
     if s.overscroll.abs() < 0.05 {
         s.overscroll = 0.0;
@@ -394,17 +402,12 @@ fn smooth_bounce_scroll(ui: &mut Ui, id_source: &str, add_contents: impl FnOnce(
             });
         });
 
-    let max_y = (out.content_size.y - out.inner_rect.height() - s.overscroll.abs()).max(0.0);
+    let max_y = (out.content_size.y - s.overscroll.abs() - out.inner_rect.height()).max(0.0);
     s.last_max_y = max_y;
     s.target_y = s.target_y.clamp(0.0, max_y);
+    s.current_y = s.current_y.clamp(0.0, max_y);
 
-    if wheel_y.abs() <= 0.01 && (out.state.offset.y - scroll_offset).abs() > 1.5 {
-        s.target_y = out.state.offset.y.clamp(0.0, max_y);
-        s.current_y = s.target_y;
-        s.overscroll = 0.0;
-    }
-
-    if (s.target_y - s.current_y).abs() > 0.25 || s.overscroll.abs() > 0.25 {
+    if (s.target_y - s.current_y).abs() > 0.2 || s.overscroll.abs() > 0.2 {
         ui.ctx().request_repaint();
     }
 
@@ -1405,16 +1408,20 @@ fn render_filter_bar(ui: &mut Ui, state: &mut RewindUiState, pop: &mut PopoverLa
 
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 28.0), Sense::click());
             let bg = if active {
-                accent.soft_bg()
+                Color32::WHITE
             } else if resp.hovered() {
                 card_hover()
             } else {
                 pill_bg()
             };
-            let border = if active { accent.color() } else { border_col() };
             ui.painter().rect_filled(rect, Rounding::same(14.0), bg);
-            ui.painter()
-                .rect_stroke(rect, Rounding::same(14.0), Stroke::new(1.0_f32, border));
+            if !active {
+                ui.painter().rect_stroke(
+                    rect,
+                    Rounding::same(14.0),
+                    Stroke::new(1.0_f32, border_col()),
+                );
+            }
 
             let mut text_x = rect.left() + 12.0;
             if is_star {
@@ -1433,7 +1440,11 @@ fn render_filter_bar(ui: &mut Ui, state: &mut RewindUiState, pop: &mut PopoverLa
                 text_x = rect.left() + 29.0;
             }
 
-            let text_col = if active { accent.color() } else { TEXT_MUTED };
+            let text_col = if active {
+                Color32::from_rgb(14, 18, 26)
+            } else {
+                TEXT_MUTED
+            };
             ui.painter().text(
                 Pos2::new(text_x, rect.center().y),
                 egui::Align2::LEFT_CENTER,
@@ -2339,6 +2350,55 @@ fn render_settings(
                             }
                         });
                         ui.add_space(6.0);
+
+                        settings_divider(ui);
+
+                        settings_row(
+                            ui,
+                            UiIcon::Codec,
+                            accent.color(),
+                            "Capture Sharpening (Experimental)",
+                            "Lightweight GPU CAS sharpening on recorded frames (~0.1 ms)",
+                            |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 6.0;
+                                    for lvl in rewind::config::SharpenLevel::ALL {
+                                        let active =
+                                            state.snapshot.config.capture_sharpen == lvl;
+                                        let bg = if active {
+                                            accent.soft_bg()
+                                        } else {
+                                            Color32::from_rgba_unmultiplied(255, 255, 255, 10)
+                                        };
+                                        let stroke_col = if active {
+                                            accent.color()
+                                        } else {
+                                            border_col()
+                                        };
+                                        let txt_col = if active {
+                                            accent.color()
+                                        } else {
+                                            TEXT_MUTED
+                                        };
+                                        let resp = ui.add(
+                                            egui::Button::new(
+                                                RichText::new(lvl.label())
+                                                    .size(11.5)
+                                                    .color(txt_col),
+                                            )
+                                            .fill(bg)
+                                            .stroke(Stroke::new(1.0_f32, stroke_col))
+                                            .rounding(Rounding::same(6.0))
+                                            .min_size(Vec2::new(56.0, 26.0)),
+                                        );
+                                        if resp.clicked() && !active {
+                                            state.snapshot.config.capture_sharpen = lvl;
+                                            cfg_changed = true;
+                                        }
+                                    }
+                                });
+                            },
+                        );
                     });
 
                     ui.add_space(18.0);
@@ -3187,7 +3247,10 @@ fn render_settings(
     });
 
     if cfg_changed {
-        state.push_config_update(now_secs);
+        state.pending_config_update = Some(state.snapshot.config.clone());
+        state.pending_config_at = now_secs;
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(80));
     }
 }
 
@@ -3628,11 +3691,18 @@ fn render_clip_modal(ctx: &egui::Context, state: &mut RewindUiState, now_secs: f
             state.send_sync(IpcRequest::DeleteClip { id: clip.id }, now_secs);
             return;
         }
+        let mut space_toggled = false;
         if ctx.input(|i| i.key_pressed(Key::Space)) {
             state.player_playing = !state.player_playing;
             if let Some(dec) = &state.decoder {
                 dec.set_playing(state.player_playing);
             }
+            space_toggled = true;
+        }
+        if space_toggled {
+            ctx.data_mut(|d| {
+                d.insert_temp(Id::new(("player_hud_active", clip.id)), now_secs);
+            });
         }
     }
 
@@ -3704,6 +3774,110 @@ fn render_clip_modal(ctx: &egui::Context, state: &mut RewindUiState, now_secs: f
     let screen = ctx.screen_rect();
     let modal_thumb = state.get_or_load_thumbnail(ctx, &clip.thumb_path);
 
+    if !state.modal_fullscreen && state.modal_blur_tex.is_none() {
+        let mut captured: Option<std::sync::Arc<egui::ColorImage>> = None;
+        ctx.input(|i| {
+            for ev in &i.raw.events {
+                if let egui::Event::Screenshot { image, .. } = ev {
+                    captured = Some(image.clone());
+                    break;
+                }
+            }
+        });
+        if let Some(shot) = captured {
+            let [sw, sh] = shot.size;
+            let dw = (sw / 2).max(1);
+            let dh = (sh / 2).max(1);
+            let mut small = vec![0_u8; dw * dh * 4];
+            for y in 0..dh {
+                let sy = (y * 2).min(sh.saturating_sub(1));
+                for x in 0..dw {
+                    let sx = (x * 2).min(sw.saturating_sub(1));
+                    let c = shot.pixels[sy * sw + sx];
+                    let off = (y * dw + x) * 4;
+                    small[off] = c.r();
+                    small[off + 1] = c.g();
+                    small[off + 2] = c.b();
+                    small[off + 3] = 255;
+                }
+            }
+            if let Some(buf) = image::RgbaImage::from_raw(dw as u32, dh as u32, small) {
+                let blurred = image::imageops::fast_blur(&buf, 2.0);
+                let ci = egui::ColorImage::from_rgba_unmultiplied([dw, dh], blurred.as_raw());
+                state.modal_blur_tex = Some(ctx.load_texture(
+                    "modal_blur_bg",
+                    ci,
+                    TextureOptions::LINEAR,
+                ));
+                state.modal_opened_at = now_secs;
+            }
+        } else if let Some(req_t) = state.modal_blur_requested_at {
+            if now_secs - req_t < 0.12 {
+                ctx.request_repaint();
+                return;
+            }
+        } else {
+            state.modal_blur_requested_at = Some(now_secs);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot);
+            ctx.request_repaint();
+            return;
+        }
+    }
+
+    let modal_t = ease_out_cubic(((now_secs - state.modal_opened_at) as f32 / 0.20).clamp(0.0, 1.0));
+    if modal_t < 1.0 {
+        ctx.request_repaint();
+    }
+    let modal_w = 820.0_f32.min(screen.width() - 84.0).max(560.0);
+    let content_w_est = (modal_w - 28.0).max(320.0);
+    let video_h_est = (content_w_est * 9.0 / 16.0).clamp(240.0, (screen.height() - 212.0).max(240.0));
+    let modal_h = (video_h_est + 176.0).min(screen.height() - 36.0).max(420.0);
+    let modal_center = screen.center() + Vec2::new(0.0, (1.0 - modal_t) * 14.0);
+    let modal_rect = Rect::from_center_size(modal_center, Vec2::new(modal_w, modal_h));
+    let hud_hit_rect = if state.modal_fullscreen {
+        screen
+    } else {
+        Rect::from_min_size(
+            Pos2::new(modal_rect.left() + 14.0, modal_rect.top() + 58.0),
+            Vec2::new(content_w_est, video_h_est),
+        )
+    };
+
+    let hud_id = Id::new(("player_hud_active", clip.id));
+    let mut hud_last_active =
+        ctx.data_mut(|d| d.get_temp::<f64>(hud_id).unwrap_or(state.modal_opened_at));
+    let pointer_moved = ctx.input(|i| {
+        let active = i.pointer.delta().length_sq() > 0.5
+            || i.pointer.any_pressed()
+            || i.pointer.any_released();
+        let in_player = i
+            .pointer
+            .hover_pos()
+            .or_else(|| i.pointer.interact_pos())
+            .map(|p| hud_hit_rect.contains(p))
+            .unwrap_or(false);
+        active && in_player
+    });
+    if pointer_moved {
+        hud_last_active = now_secs;
+        ctx.data_mut(|d| d.insert_temp(hud_id, hud_last_active));
+    }
+    let hud_age = (now_secs - hud_last_active).max(0.0) as f32;
+    let hud_on = hud_age < 2.0;
+    let hud_alpha = ctx.animate_bool_with_time(
+        Id::new(("player_hud_vis", clip.id)),
+        hud_on,
+        if hud_on { 0.14 } else { 0.30 },
+    );
+    if hud_on {
+        ctx.request_repaint_after(std::time::Duration::from_secs_f32(
+            (2.0 - hud_age).max(0.016),
+        ));
+    }
+    if hud_alpha > 0.01 && hud_alpha < 0.99 {
+        ctx.request_repaint();
+    }
+
     if state.modal_fullscreen {
         egui::Area::new(Id::new("clip_modal_overlay"))
             .order(Order::Foreground)
@@ -3743,19 +3917,11 @@ fn render_clip_modal(ctx: &egui::Context, state: &mut RewindUiState, now_secs: f
                     paint_preload_overlay(ui.painter(), video_rect, preload_pct, ac);
                 }
 
-                render_player_controls_overlay(ui, state, screen, screen, dur, ac);
+                render_player_controls_overlay(ui, state, screen, screen, dur, ac, hud_alpha);
             });
         return;
     }
 
-    let modal_t = ease_out_cubic(((now_secs - state.modal_opened_at) as f32 / 0.20).clamp(0.0, 1.0));
-    if modal_t < 1.0 {
-        ctx.request_repaint();
-    }
-    let modal_w = 780.0_f32.min(screen.width() - 96.0).max(540.0);
-    let modal_h = 600.0_f32.min(screen.height() - 40.0).max(460.0);
-    let modal_center = screen.center() + Vec2::new(0.0, (1.0 - modal_t) * 14.0);
-    let modal_rect = Rect::from_center_size(modal_center, Vec2::new(modal_w, modal_h));
     let prev_rect = Rect::from_center_size(
         Pos2::new(modal_rect.left() - 28.0, modal_rect.center().y),
         Vec2::splat(36.0),
@@ -3775,11 +3941,25 @@ fn render_clip_modal(ctx: &egui::Context, state: &mut RewindUiState, now_secs: f
             ui.set_min_size(screen.size());
             ui.set_max_size(screen.size());
             ui.set_opacity(modal_t);
-            ui.painter().rect_filled(
-                screen,
-                Rounding::ZERO,
-                Color32::from_rgba_unmultiplied(6, 8, 13, (185.0 * modal_t) as u8),
-            );
+            if let Some(blur_tex) = &state.modal_blur_tex {
+                ui.painter().image(
+                    blur_tex.id(),
+                    screen,
+                    Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                    Color32::from_rgba_unmultiplied(255, 255, 255, (255.0 * modal_t) as u8),
+                );
+                ui.painter().rect_filled(
+                    screen,
+                    Rounding::ZERO,
+                    Color32::from_rgba_unmultiplied(6, 8, 13, (150.0 * modal_t) as u8),
+                );
+            } else {
+                ui.painter().rect_filled(
+                    screen,
+                    Rounding::ZERO,
+                    Color32::from_rgba_unmultiplied(6, 8, 13, (218.0 * modal_t) as u8),
+                );
+            }
 
             if nav_chevron_button_at(ui, prev_rect, UiIcon::ChevronLeft, prev_clip.is_some()) {
                 if let Some(p) = &prev_clip {
@@ -3792,15 +3972,30 @@ fn render_clip_modal(ctx: &egui::Context, state: &mut RewindUiState, now_secs: f
                 }
             }
 
+            let modal_shadow = Shadow {
+                offset: Vec2::new(0.0, 20.0),
+                blur: 48.0,
+                spread: 8.0,
+                color: Color32::from_rgba_unmultiplied(0, 0, 0, 175),
+            };
+            ui.painter()
+                .add(modal_shadow.as_shape(modal_rect, Rounding::same(8.0)));
             ui.painter().rect_filled(
                 modal_rect,
-                Rounding::same(18.0),
-                Color32::from_rgba_unmultiplied(15, 19, 27, 246),
+                Rounding::same(8.0),
+                Color32::from_rgb(17, 18, 22),
             );
             ui.painter().rect_stroke(
                 modal_rect,
-                Rounding::same(18.0),
-                Stroke::new(1.0_f32, border_bright()),
+                Rounding::same(8.0),
+                Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 20)),
+            );
+            ui.painter().line_segment(
+                [
+                    Pos2::new(modal_rect.left() + 8.0, modal_rect.top() + 1.0),
+                    Pos2::new(modal_rect.right() - 8.0, modal_rect.top() + 1.0),
+                ],
+                Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 20)),
             );
 
             ui.allocate_new_ui(egui::UiBuilder::new().max_rect(modal_rect), |ui| {
@@ -3818,19 +4013,18 @@ fn render_clip_modal(ctx: &egui::Context, state: &mut RewindUiState, now_secs: f
 
                             let g_w = (clip.game.len() as f32 * 6.8 + 18.0).clamp(54.0, 130.0);
                             let (g_rect, _) =
-                                ui.allocate_exact_size(Vec2::new(g_w, 24.0), Sense::hover());
-                            ui.painter().rect_filled(g_rect, Rounding::same(6.0), accent.soft_bg());
-                            ui.painter().rect_stroke(
+                                ui.allocate_exact_size(Vec2::new(g_w, 22.0), Sense::hover());
+                            ui.painter().rect_filled(
                                 g_rect,
-                                Rounding::same(6.0),
-                                Stroke::new(1.0_f32, ac),
+                                Rounding::same(8.0),
+                                Color32::from_rgb(25, 27, 34),
                             );
                             ui.painter().text(
                                 g_rect.center(),
                                 egui::Align2::CENTER_CENTER,
                                 &clip.game,
-                                FontId::proportional(11.5),
-                                ac,
+                                FontId::proportional(11.0),
+                                TEXT_MUTED,
                             );
 
                             if state.rename_editing {
@@ -3889,16 +4083,8 @@ fn render_clip_modal(ctx: &egui::Context, state: &mut RewindUiState, now_secs: f
                                 if hov {
                                     ui.painter().rect_filled(
                                         t_rect,
-                                        Rounding::same(6.0),
-                                        Color32::from_rgba_unmultiplied(255, 255, 255, 16),
-                                    );
-                                    ui.painter().rect_stroke(
-                                        t_rect,
-                                        Rounding::same(6.0),
-                                        Stroke::new(
-                                            1.0_f32,
-                                            Color32::from_rgba_unmultiplied(255, 255, 255, 26),
-                                        ),
+                                        Rounding::same(8.0),
+                                        Color32::from_rgb(25, 27, 34),
                                     );
                                 }
                                 ui.painter().galley(
@@ -3930,18 +4116,29 @@ fn render_clip_modal(ctx: &egui::Context, state: &mut RewindUiState, now_secs: f
                                 }
                             }
 
+                            ui.label(
+                                RichText::new(format!(
+                                    "•  {} {}fps  •  {}  •  {}",
+                                    clip.resolution_badge(),
+                                    clip.fps,
+                                    format_file_size(clip.size_bytes),
+                                    clip.relative_time(now_unix)
+                                ))
+                                .size(11.5)
+                                .color(TEXT_DIM),
+                            );
+
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                 let (cr, cresp) =
                                     ui.allocate_exact_size(Vec2::splat(28.0), Sense::click());
                                 ui.painter().rect_filled(
                                     cr,
-                                    Rounding::same(7.0),
-                                    if cresp.hovered() { card_hover() } else { pill_bg() },
-                                );
-                                ui.painter().rect_stroke(
-                                    cr,
-                                    Rounding::same(7.0),
-                                    Stroke::new(1.0_f32, border_col()),
+                                    Rounding::same(8.0),
+                                    if cresp.hovered() {
+                                        Color32::from_rgb(25, 27, 34)
+                                    } else {
+                                        Color32::TRANSPARENT
+                                    },
                                 );
                                 paint_icon(ui.painter(), cr.shrink(8.0), UiIcon::Close, TEXT_MUTED);
                                 if cresp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
@@ -3951,35 +4148,23 @@ fn render_clip_modal(ctx: &egui::Context, state: &mut RewindUiState, now_secs: f
                         });
                     });
 
-                    ui.painter().line_segment(
-                        [
-                            Pos2::new(modal_rect.left(), header_r.bottom()),
-                            Pos2::new(modal_rect.right(), header_r.bottom()),
-                        ],
-                        Stroke::new(1.0_f32, border_col()),
-                    );
-
                     let body_rect = Rect::from_min_max(
-                        Pos2::new(modal_rect.left() + 18.0, header_r.bottom() + 14.0),
-                        Pos2::new(modal_rect.right() - 18.0, modal_rect.bottom() - 14.0),
+                        Pos2::new(modal_rect.left() + 14.0, header_r.bottom() + 8.0),
+                        Pos2::new(modal_rect.right() - 14.0, modal_rect.bottom() - 14.0),
                     );
                     let content_w = body_rect.width().max(320.0);
-                    let video_h = (modal_h - 264.0).clamp(210.0, 340.0);
+                    let video_h = video_h_est;
 
                     ui.allocate_new_ui(egui::UiBuilder::new().max_rect(body_rect), |ui| {
                         ui.vertical(|ui| {
                             ui.set_width(content_w);
-                            ui.spacing_mut().item_spacing.y = 12.0;
+                            ui.spacing_mut().item_spacing.y = 8.0;
 
                             let (video_rect, _) = ui.allocate_exact_size(
                                 Vec2::new(content_w, video_h),
                                 Sense::hover(),
                             );
-                            ui.painter().rect_filled(
-                                video_rect,
-                                Rounding::same(12.0),
-                                Color32::from_rgb(7, 9, 14),
-                            );
+                            let mut controls_bounds = video_rect;
                             if let Some(tex) =
                                 state.player_texture.as_ref().or(modal_thumb.as_ref())
                             {
@@ -3996,11 +4181,12 @@ fn render_clip_modal(ctx: &egui::Context, state: &mut RewindUiState, now_secs: f
                                     Vec2::new(video_rect.width(), video_rect.width() / vid_ar)
                                 };
                                 let fit_rect = Rect::from_center_size(video_rect.center(), fit_sz);
+                                controls_bounds = fit_rect;
                                 paint_rounded_image(
                                     ui.painter(),
                                     tex.id(),
                                     fit_rect,
-                                    Rounding::same(10.0),
+                                    Rounding::same(8.0),
                                     Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
                                     Color32::WHITE,
                                 );
@@ -4008,62 +4194,32 @@ fn render_clip_modal(ctx: &egui::Context, state: &mut RewindUiState, now_secs: f
                                 paint_empty_thumb_surface(
                                     ui.painter(),
                                     video_rect,
-                                    Rounding::same(12.0),
+                                    Rounding::same(8.0),
                                 );
                             }
-                            ui.painter().rect_stroke(
-                                video_rect,
-                                Rounding::same(12.0),
-                                Stroke::new(1.0_f32, border_col()),
-                            );
 
                             if !preload_ready {
-                                paint_preload_overlay(ui.painter(), video_rect, preload_pct, ac);
+                                paint_preload_overlay(ui.painter(), controls_bounds, preload_pct, ac);
                             }
 
-                            render_player_controls_overlay(ui, state, video_rect, video_rect, dur, ac);
-
-                            let badge_txt = format!(
-                                "{}  •  {} {}fps",
-                                clip.game.to_ascii_uppercase(),
-                                clip.resolution_badge(),
-                                clip.fps
-                            );
-                            let bw = (badge_txt.len() as f32 * 6.5 + 22.0).clamp(120.0, 280.0);
-                            let br = Rect::from_min_size(
-                                video_rect.left_top() + Vec2::new(14.0, 14.0),
-                                Vec2::new(bw, 26.0),
-                            );
-                            ui.painter().rect_filled(
-                                br,
-                                Rounding::same(6.0),
-                                Color32::from_rgba_unmultiplied(8, 10, 15, 210),
-                            );
-                            ui.painter().rect_stroke(
-                                br,
-                                Rounding::same(6.0),
-                                Stroke::new(
-                                    1.0_f32,
-                                    Color32::from_rgba_unmultiplied(255, 255, 255, 26),
-                                ),
-                            );
-                            ui.painter().text(
-                                br.center(),
-                                egui::Align2::CENTER_CENTER,
-                                badge_txt,
-                                FontId::monospace(10.5),
-                                TEXT_PRIMARY,
+                            let mut overlay_ui =
+                                ui.new_child(egui::UiBuilder::new().max_rect(controls_bounds));
+                            render_player_controls_overlay(
+                                &mut overlay_ui,
+                                state,
+                                controls_bounds,
+                                controls_bounds,
+                                dur,
+                                ac,
+                                hud_alpha,
                             );
 
                             egui::Frame::none()
-                                .fill(Color32::from_rgba_unmultiplied(20, 25, 35, 220))
-                                .stroke(Stroke::new(1.0_f32, border_col()))
-                                .rounding(Rounding::same(11.0))
-                                .inner_margin(Margin::symmetric(14.0, 10.0))
+                                .inner_margin(Margin::ZERO)
                                 .show(ui, |ui| {
-                                    ui.set_width((content_w - 28.0).max(240.0));
+                                    ui.set_width(content_w);
                                     ui.vertical(|ui| {
-                                        ui.spacing_mut().item_spacing.y = 8.0;
+                                        ui.spacing_mut().item_spacing.y = 4.0;
 
                                         ui.horizontal(|ui| {
                                             let (sc_r, _) = ui.allocate_exact_size(
@@ -4103,20 +4259,28 @@ fn render_clip_modal(ctx: &egui::Context, state: &mut RewindUiState, now_secs: f
                                                     );
                                                     ui.painter().rect_filled(
                                                         db_r,
-                                                        Rounding::same(6.0),
-                                                        accent.soft_bg(),
-                                                    );
-                                                    ui.painter().rect_stroke(
-                                                        db_r,
-                                                        Rounding::same(6.0),
-                                                        Stroke::new(1.0_f32, ac),
+                                                        Rounding::same(8.0),
+                                                        Color32::from_rgb(25, 27, 34),
                                                     );
                                                     ui.painter().text(
                                                         db_r.center(),
                                                         egui::Align2::CENTER_CENTER,
                                                         span_lbl,
-                                                        FontId::proportional(11.0),
-                                                        ac,
+                                                        FontId::monospace(11.0),
+                                                        TEXT_PRIMARY,
+                                                    );
+                                                    ui.add_space(6.0);
+                                                    let est_sz = ((clip.size_bytes as f32)
+                                                        * (span_s / dur).clamp(0.0, 1.0))
+                                                    .round()
+                                                        as u64;
+                                                    ui.label(
+                                                        RichText::new(format!(
+                                                            "~{}",
+                                                            format_file_size(est_sz)
+                                                        ))
+                                                        .size(11.0)
+                                                        .color(TEXT_DIM),
                                                     );
                                                 },
                                             );
@@ -4124,7 +4288,7 @@ fn render_clip_modal(ctx: &egui::Context, state: &mut RewindUiState, now_secs: f
 
                                         let tl_w = ui.available_width().max(200.0);
                                         let (tl_rect, tl_resp) = ui.allocate_exact_size(
-                                            Vec2::new(tl_w, 36.0),
+                                            Vec2::new(tl_w, 28.0),
                                             Sense::click_and_drag(),
                                         );
                                         let handle_w = 12.0_f32;
@@ -4223,13 +4387,8 @@ fn render_clip_modal(ctx: &egui::Context, state: &mut RewindUiState, now_secs: f
 
                                         ui.painter().rect_filled(
                                             tl_rect,
-                                            Rounding::same(7.0),
-                                            Color32::from_rgba_unmultiplied(12, 15, 22, 235),
-                                        );
-                                        ui.painter().rect_stroke(
-                                            tl_rect,
-                                            Rounding::same(7.0),
-                                            Stroke::new(1.0_f32, border_col()),
+                                            Rounding::same(8.0),
+                                            Color32::from_rgb(25, 27, 34),
                                         );
 
                                         let sel_rect = Rect::from_min_max(
@@ -4243,63 +4402,80 @@ fn render_clip_modal(ctx: &egui::Context, state: &mut RewindUiState, now_secs: f
                                                 ac.r(),
                                                 ac.g(),
                                                 ac.b(),
-                                                48,
+                                                16,
                                             ),
                                         );
                                         ui.painter().line_segment(
                                             [sel_rect.left_top(), sel_rect.right_top()],
-                                            Stroke::new(1.5_f32, ac),
+                                            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(ac.r(), ac.g(), ac.b(), 140)),
                                         );
                                         ui.painter().line_segment(
                                             [sel_rect.left_bottom(), sel_rect.right_bottom()],
-                                            Stroke::new(1.5_f32, ac),
+                                            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(ac.r(), ac.g(), ac.b(), 140)),
                                         );
 
-                                        for t_idx in 1..=7 {
-                                            let tx = inner_left
-                                                + (t_idx as f32 / 8.0) * inner_w;
+                                        let bar_count = ((inner_w / 5.5).floor() as usize).clamp(32, 140);
+                                        for b_idx in 0..bar_count {
+                                            let bx = inner_left
+                                                + ((b_idx as f32 + 0.5) / bar_count as f32)
+                                                    * inner_w;
+                                            let seed = ((clip.id as u64)
+                                                .wrapping_mul(6364136223846793005)
+                                                ^ (b_idx as u64).wrapping_mul(1442695040888963407))
+                                            .rotate_left(13);
+                                            let amp = 0.25 + ((seed % 100) as f32 / 100.0) * 0.70;
+                                            let half_h = (amp * 10.0).max(2.5);
+                                            let in_range = bx >= start_x && bx <= end_x;
+                                            let bar_col = if in_range {
+                                                Color32::from_rgba_unmultiplied(
+                                                    ac.r(),
+                                                    ac.g(),
+                                                    ac.b(),
+                                                    220,
+                                                )
+                                            } else {
+                                                Color32::from_rgba_unmultiplied(255, 255, 255, 52)
+                                            };
                                             ui.painter().line_segment(
                                                 [
-                                                    Pos2::new(tx, tl_rect.center().y - 5.0),
-                                                    Pos2::new(tx, tl_rect.center().y + 5.0),
+                                                    Pos2::new(bx, tl_rect.center().y - half_h),
+                                                    Pos2::new(bx, tl_rect.center().y + half_h),
                                                 ],
-                                                Stroke::new(
-                                                    1.0_f32,
-                                                    Color32::from_rgba_unmultiplied(
-                                                        255, 255, 255, 40,
-                                                    ),
-                                                ),
+                                                Stroke::new(2.0_f32, bar_col),
                                             );
                                         }
 
                                         let playhead_x = inner_left
                                             + ((state.player_pos_secs / dur).clamp(0.0, 1.0))
                                                 * inner_w;
-                                        let ph_r = Rect::from_center_size(
-                                            Pos2::new(playhead_x, tl_rect.center().y),
-                                            Vec2::new(2.0, 26.0),
+                                        ui.painter().line_segment(
+                                            [
+                                                Pos2::new(playhead_x, tl_rect.top() + 2.0),
+                                                Pos2::new(playhead_x, tl_rect.bottom() - 2.0),
+                                            ],
+                                            Stroke::new(1.6_f32, ac),
                                         );
-                                        ui.painter().rect_filled(
-                                            ph_r,
-                                            Rounding::same(1.0),
-                                            Color32::WHITE,
+                                        ui.painter().circle_filled(
+                                            Pos2::new(playhead_x, tl_rect.top() + 2.0),
+                                            3.5,
+                                            ac,
                                         );
 
-                                        let grip_col = contrasting_fg(ac);
+                                        let grip_col = Color32::from_rgb(40, 46, 58);
                                         for hx in [start_x, end_x] {
                                             let h_rect = Rect::from_center_size(
                                                 Pos2::new(hx, tl_rect.center().y),
-                                                Vec2::new(handle_w, 36.0),
+                                                Vec2::new(handle_w, 28.0),
                                             );
                                             ui.painter().rect_filled(
                                                 h_rect,
                                                 Rounding::same(5.0),
-                                                ac,
+                                                Color32::WHITE,
                                             );
                                             ui.painter().line_segment(
                                                 [
-                                                    Pos2::new(hx, h_rect.top() + 10.0),
-                                                    Pos2::new(hx, h_rect.bottom() - 10.0),
+                                                    Pos2::new(hx, h_rect.top() + 8.0),
+                                                    Pos2::new(hx, h_rect.bottom() - 8.0),
                                                 ],
                                                 Stroke::new(1.6_f32, grip_col),
                                             );
@@ -4308,25 +4484,6 @@ fn render_clip_modal(ctx: &egui::Context, state: &mut RewindUiState, now_secs: f
                                             .on_hover_cursor(CursorIcon::ResizeHorizontal);
                                     });
                                 });
-
-                            ui.label(
-                                RichText::new(format!(
-                                    "{} {}fps   •   {}   •   {}",
-                                    clip.resolution_badge(),
-                                    clip.fps,
-                                    format_file_size(clip.size_bytes),
-                                    clip.relative_time(now_unix)
-                                ))
-                                .size(11.5)
-                                .color(TEXT_MUTED),
-                            );
-
-                            let (div_r, _) =
-                                ui.allocate_exact_size(Vec2::new(content_w, 1.0), Sense::hover());
-                            ui.painter().line_segment(
-                                [div_r.left_center(), div_r.right_center()],
-                                Stroke::new(1.0_f32, border_col()),
-                            );
 
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 8.0;
@@ -4344,9 +4501,9 @@ fn render_clip_modal(ctx: &egui::Context, state: &mut RewindUiState, now_secs: f
                                     if clip.favorite {
                                         Color32::from_rgba_unmultiplied(250, 204, 21, 24)
                                     } else {
-                                        pill_bg()
+                                        Color32::TRANSPARENT
                                     },
-                                    if clip.favorite { STAR_GOLD } else { border_col() },
+                                    Color32::TRANSPARENT,
                                     if clip.favorite { STAR_GOLD } else { TEXT_MUTED },
                                 ) {
                                     state.send_sync(
@@ -4360,8 +4517,8 @@ fn render_clip_modal(ctx: &egui::Context, state: &mut RewindUiState, now_secs: f
                                     UiIcon::Library,
                                     "Copy Video",
                                     TEXT_PRIMARY,
-                                    pill_bg(),
-                                    border_col(),
+                                    Color32::TRANSPARENT,
+                                    Color32::TRANSPARENT,
                                     TEXT_MUTED,
                                 ) {
                                     if copy_file_to_clipboard(&clip.file_path) {
@@ -4396,12 +4553,10 @@ fn render_clip_modal(ctx: &egui::Context, state: &mut RewindUiState, now_secs: f
                                 };
                                 let disc_fill = if enc_busy {
                                     ac
-                                } else if over_60s {
-                                    Color32::from_rgba_unmultiplied(24, 28, 38, 175)
                                 } else {
-                                    pill_bg()
+                                    Color32::TRANSPARENT
                                 };
-                                let disc_stroke = if enc_busy { ac } else { border_col() };
+                                let disc_stroke = Color32::TRANSPARENT;
                                 let disc_icon = if enc_busy {
                                     contrasting_fg(ac)
                                 } else if over_60s {
@@ -4434,25 +4589,41 @@ fn render_clip_modal(ctx: &egui::Context, state: &mut RewindUiState, now_secs: f
                                     state.start_discord_encode(&clip, trim, now_secs);
                                 }
 
-                                let save_fg = contrasting_fg(ac);
-                                if modal_action_pill(
-                                    ui,
-                                    UiIcon::Check,
-                                    "Save Trim",
-                                    save_fg,
-                                    ac,
-                                    ac,
-                                    save_fg,
-                                ) {
-                                    state.send_sync(
-                                        IpcRequest::TrimClip {
-                                            id: clip.id,
-                                            start_secs: state.trim_start_secs,
-                                            end_secs: state.trim_end_secs,
-                                            vertical_9_16: false,
-                                        },
-                                        now_secs,
-                                    );
+                                let is_trimmed = state.trim_start_secs > 0.05
+                                    || (dur - state.trim_end_secs) > 0.05;
+                                let save_vis = ui.ctx().animate_bool_with_time(
+                                    Id::new(("save_trim_vis", clip.id)),
+                                    is_trimmed,
+                                    0.18,
+                                );
+                                if save_vis > 0.02 {
+                                    let save_fg = Color32::from_rgb(14, 18, 26);
+                                    let mut clicked_save = false;
+                                    ui.scope(|ui| {
+                                        ui.multiply_opacity(save_vis);
+                                        clicked_save = modal_action_pill_ex(
+                                            ui,
+                                            UiIcon::Check,
+                                            "Save Trim",
+                                            save_fg,
+                                            Color32::WHITE,
+                                            Color32::TRANSPARENT,
+                                            save_fg,
+                                            save_vis > 0.5,
+                                            None,
+                                        );
+                                    });
+                                    if clicked_save {
+                                        state.send_sync(
+                                            IpcRequest::TrimClip {
+                                                id: clip.id,
+                                                start_secs: state.trim_start_secs,
+                                                end_secs: state.trim_end_secs,
+                                                vertical_9_16: false,
+                                            },
+                                            now_secs,
+                                        );
+                                    }
                                 }
 
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -4462,8 +4633,8 @@ fn render_clip_modal(ctx: &egui::Context, state: &mut RewindUiState, now_secs: f
                                         UiIcon::Trash,
                                         "Delete",
                                         del_col,
-                                        Color32::from_rgba_unmultiplied(244, 63, 94, 18),
-                                        Color32::from_rgba_unmultiplied(244, 63, 94, 80),
+                                        Color32::TRANSPARENT,
+                                        Color32::TRANSPARENT,
                                         del_col,
                                     ) {
                                         should_close = true;
@@ -4680,14 +4851,27 @@ fn modal_action_pill_ex(
     let w = (label.len() as f32 * 6.8 + 42.0).max(86.0);
     let sense = if enabled { Sense::click() } else { Sense::hover() };
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 34.0), sense);
-    let draw_fill = if enabled && resp.hovered() && fill == pill_bg() {
-        card_hover()
+    let draw_fill = if enabled && resp.hovered() {
+        if fill == Color32::TRANSPARENT {
+            Color32::from_rgba_unmultiplied(fg.r(), fg.g(), fg.b(), 20)
+        } else if fill == pill_bg() {
+            card_hover()
+        } else {
+            fill
+        }
     } else {
         fill
     };
-    ui.painter().rect_filled(rect, Rounding::same(10.0), draw_fill);
-    ui.painter()
-        .rect_stroke(rect, Rounding::same(10.0), Stroke::new(1.0_f32, stroke));
+    let paint_rect = if fill == Color32::WHITE {
+        rect.shrink2(Vec2::new(0.0, 1.5))
+    } else {
+        rect
+    };
+    ui.painter().rect_filled(paint_rect, Rounding::same(8.0), draw_fill);
+    if stroke.a() > 0 {
+        ui.painter()
+            .rect_stroke(paint_rect, Rounding::same(8.0), Stroke::new(1.0_f32, stroke));
+    }
     let ic_rect = Rect::from_center_size(
         Pos2::new(rect.left() + 17.0, rect.center().y),
         Vec2::splat(13.0),
@@ -4716,19 +4900,47 @@ fn nav_chevron_button_at(ui: &mut Ui, rect: Rect, icon: UiIcon, enabled: bool) -
         Id::new(("modal_nav", icon as u8)),
         if enabled { Sense::click() } else { Sense::hover() },
     );
-    let bg = if enabled && resp.hovered() {
-        card_hover()
+    let hov_t = ui.ctx().animate_bool_with_time(
+        Id::new(("modal_nav_hov", icon as u8)),
+        enabled && resp.hovered(),
+        0.14,
+    );
+    let bg = if enabled {
+        lerp_color(
+            Color32::from_rgba_unmultiplied(20, 22, 28, 178),
+            Color32::from_rgba_unmultiplied(35, 38, 48, 217),
+            hov_t,
+        )
     } else {
-        Color32::from_rgba_unmultiplied(20, 25, 36, 220)
+        Color32::from_rgba_unmultiplied(20, 22, 28, 110)
     };
-    ui.painter().circle_filled(rect.center(), 17.0, bg);
-    ui.painter()
-        .circle_stroke(rect.center(), 17.0, Stroke::new(1.0_f32, border_col()));
+    let radius = 17.0 + hov_t * 1.5;
+    let border_a = if enabled {
+        (20.0 + hov_t * 14.0) as u8
+    } else {
+        12
+    };
+    ui.painter().circle_filled(rect.center(), radius, bg);
+    ui.painter().circle_stroke(
+        rect.center(),
+        radius,
+        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, border_a)),
+    );
+    let ic_col = if enabled {
+        Color32::from_rgba_unmultiplied(
+            TEXT_PRIMARY.r(),
+            TEXT_PRIMARY.g(),
+            TEXT_PRIMARY.b(),
+            (178.0 + hov_t * 77.0) as u8,
+        )
+    } else {
+        Color32::from_rgba_unmultiplied(TEXT_DIM.r(), TEXT_DIM.g(), TEXT_DIM.b(), 120)
+    };
     paint_icon(
         ui.painter(),
-        rect.shrink(10.0),
+        rect.shrink(10.0 - hov_t * 0.8),
         icon,
-        if enabled { TEXT_PRIMARY } else { TEXT_DIM },
+        ic_col,
     );
     if enabled {
         resp.on_hover_cursor(CursorIcon::PointingHand).clicked()
@@ -4745,42 +4957,73 @@ fn render_undo_or_status_toast(ctx: &egui::Context, state: &mut RewindUiState, n
         .as_ref()
         .map(|p| p.load(std::sync::atomic::Ordering::Acquire).min(100));
 
-    let msg_opt = if let Some(pct) = enc_pct {
+    let (msg_opt, banner_age) = if let Some(pct) = enc_pct {
         ctx.request_repaint_after(std::time::Duration::from_millis(80));
-        Some(format!("Encoding for Discord (<10 MB)... {pct}%"))
+        (Some(format!("Encoding for Discord (<10 MB)... {pct}%")), None)
     } else if let Some((msg, t)) = &state.status_banner {
-        if now_secs - *t <= 3.5 || undo_id.is_some() {
-            Some(msg.clone())
-        } else {
-            state.status_banner = None;
-            None
-        }
+        let age = (now_secs - *t).max(0.0) as f32;
+        (Some(msg.clone()), Some(age))
     } else if undo_id.is_some() {
-        Some("Clip moved to trash".to_owned())
+        (Some("Clip moved to trash".to_owned()), None)
     } else {
-        None
+        (None, None)
     };
 
+    let spring_id = Id::new("status_toast_spring");
     let Some(msg) = msg_opt else {
+        ctx.data_mut(|d| d.insert_temp(spring_id, (48.0_f32, 0.0_f32)));
         return;
     };
 
-    let screen = ctx.screen_rect();
-    let toast_t = anim_open_progress(
-        ctx,
-        Id::new("status_toast_anim"),
-        if enc_pct.is_some() { 1 } else { 2 },
-        now_secs,
-        0.18,
-    );
+    let (y_offset, alpha) = if let Some(age) = banner_age {
+        let exit_start = 1.25_f32;
+        let exiting = undo_id.is_none() && age >= exit_start;
+        let y_target = if exiting { 52.0_f32 } else { -22.0_f32 };
+        let (stiffness, damping) = if exiting {
+            (240.0_f32, 28.0_f32)
+        } else {
+            (320.0_f32, 22.0_f32)
+        };
+        let dt = ctx.input(|i| i.stable_dt).clamp(0.001, 0.033);
+        let (mut y_pos, mut y_vel) =
+            ctx.data_mut(|d| d.get_temp::<(f32, f32)>(spring_id).unwrap_or((48.0, 0.0)));
+        let accel = stiffness * (y_target - y_pos) - damping * y_vel;
+        y_vel += accel * dt;
+        y_pos += y_vel * dt;
+        if exiting && y_pos >= 44.0 {
+            state.status_banner = None;
+            ctx.data_mut(|d| d.insert_temp(spring_id, (48.0_f32, 0.0_f32)));
+            return;
+        }
+        ctx.data_mut(|d| d.insert_temp(spring_id, (y_pos, y_vel)));
+        let settled = !exiting && (y_pos - y_target).abs() < 0.15 && y_vel.abs() < 1.0;
+        if settled {
+            if undo_id.is_none() {
+                ctx.request_repaint_after(std::time::Duration::from_secs_f32(
+                    (exit_start - age).max(0.008),
+                ));
+            }
+        } else {
+            ctx.request_repaint();
+        }
+        (y_pos, 1.0_f32)
+    } else {
+        let toast_t = anim_open_progress(
+            ctx,
+            Id::new("status_toast_anim"),
+            if enc_pct.is_some() { 1 } else { 2 },
+            now_secs,
+            0.22,
+        );
+        (-22.0 + (1.0 - toast_t) * 28.0, toast_t)
+    };
+
     egui::Area::new(Id::new("status_toast"))
         .order(Order::Tooltip)
-        .fixed_pos(Pos2::new(
-            (screen.center().x - 190.0).max(16.0),
-            screen.bottom() - 58.0 + (1.0 - toast_t) * 14.0,
-        ))
+        .constrain(false)
+        .anchor(egui::Align2::CENTER_BOTTOM, Vec2::new(0.0, y_offset))
         .show(ctx, |ui| {
-            ui.set_opacity(toast_t);
+            ui.set_opacity(alpha.clamp(0.0, 1.0));
             egui::Frame::none()
                 .fill(popover_bg())
                 .stroke(Stroke::new(1.0_f32, accent.color()))
@@ -5171,37 +5414,66 @@ fn custom_slider(
     max: f32,
     accent: Color32,
 ) -> bool {
+    custom_slider_ex(ui, id_salt, val, min, max, accent, 2.0, 6.5)
+}
+
+fn custom_slider_ex(
+    ui: &mut Ui,
+    id_salt: &str,
+    val: &mut f32,
+    min: f32,
+    max: f32,
+    accent: Color32,
+    track_half_h: f32,
+    thumb_base_r: f32,
+) -> bool {
     ui.push_id(id_salt, |ui| {
         let w = ui.available_width().max(60.0);
         let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 18.0), Sense::click_and_drag());
         let track_r = Rect::from_min_max(
-            Pos2::new(rect.left() + 6.0, rect.center().y - 2.0),
-            Pos2::new(rect.right() - 6.0, rect.center().y + 2.0),
+            Pos2::new(rect.left() + 6.0, rect.center().y - track_half_h),
+            Pos2::new(rect.right() - 6.0, rect.center().y + track_half_h),
         );
         let mut changed = false;
         let span = (max - min).max(0.0001);
+        let mut raw_frac = None;
         if resp.dragged() || resp.clicked() {
             if let Some(pos) = resp.interact_pointer_pos() {
                 let t = ((pos.x - track_r.left()) / track_r.width()).clamp(0.0, 1.0);
                 *val = min + t * span;
+                raw_frac = Some(t);
                 changed = true;
             }
         }
-        let frac = ((*val - min) / span).clamp(0.0, 1.0);
-        let thumb_x = track_r.left() + frac * track_r.width();
-
-        ui.painter()
-            .rect_filled(track_r, Rounding::same(2.0), track_bg());
-        let active_r = Rect::from_min_max(track_r.left_top(), Pos2::new(thumb_x, track_r.bottom()));
-        ui.painter().rect_filled(active_r, Rounding::same(2.0), accent);
-
-        ui.painter()
-            .circle_filled(Pos2::new(thumb_x, rect.center().y), 6.5, Color32::WHITE);
-        ui.painter().circle_stroke(
-            Pos2::new(thumb_x, rect.center().y),
-            6.5,
-            Stroke::new(2.2_f32, accent),
+        let target_frac = raw_frac.unwrap_or_else(|| ((*val - min) / span).clamp(0.0, 1.0));
+        let anim_time = if resp.dragged() { 0.0 } else { 0.12 };
+        let vis_frac = ui
+            .ctx()
+            .animate_value_with_time(Id::new(("slider_vis", id_salt)), target_frac, anim_time)
+            .clamp(0.0, 1.0);
+        let thumb_x = track_r.left() + vis_frac * track_r.width();
+        let active_scale = ui.ctx().animate_bool_with_time(
+            Id::new(("slider_hover", id_salt)),
+            resp.hovered() || resp.dragged(),
+            0.12,
         );
+        let thumb_r = thumb_base_r + active_scale * 1.2;
+
+        ui.painter()
+            .rect_filled(track_r, Rounding::same(track_half_h), track_bg());
+        let active_r = Rect::from_min_max(track_r.left_top(), Pos2::new(thumb_x, track_r.bottom()));
+        ui.painter()
+            .rect_filled(active_r, Rounding::same(track_half_h), accent);
+
+        if thumb_r > 0.5 {
+            ui.painter()
+                .circle_filled(Pos2::new(thumb_x, rect.center().y), thumb_r, Color32::WHITE);
+            ui.painter().circle_stroke(
+                Pos2::new(thumb_x, rect.center().y),
+                thumb_r,
+                Stroke::new((thumb_base_r * 0.34).max(1.4), accent),
+            );
+        }
 
         let _ = resp.on_hover_cursor(CursorIcon::PointingHand);
         changed
@@ -5502,18 +5774,27 @@ fn render_player_controls_overlay(
     ctrl_bounds: Rect,
     dur: f32,
     ac: Color32,
+    hud_alpha: f32,
 ) {
-    let vig_top = (ctrl_bounds.bottom() - 88.0).max(ctrl_bounds.top());
-    let mut vig = egui::Mesh::default();
-    let clear = Color32::from_rgba_unmultiplied(8, 10, 15, 0);
-    let dark = Color32::from_rgba_unmultiplied(8, 10, 15, 224);
-    vig.colored_vertex(Pos2::new(ctrl_bounds.left(), vig_top), clear);
-    vig.colored_vertex(Pos2::new(ctrl_bounds.right(), vig_top), clear);
-    vig.colored_vertex(ctrl_bounds.right_bottom(), dark);
-    vig.colored_vertex(ctrl_bounds.left_bottom(), dark);
-    vig.add_triangle(0, 1, 2);
-    vig.add_triangle(0, 2, 3);
-    ui.painter().add(vig);
+    if hud_alpha > 0.01 {
+        let vig_top = (ctrl_bounds.bottom() - 72.0).max(ctrl_bounds.top());
+        let vig_mid = (ctrl_bounds.bottom() - 32.0).max(vig_top);
+        let mut vig = egui::Mesh::default();
+        let clear = Color32::from_rgba_unmultiplied(0, 0, 0, 0);
+        let mid = Color32::from_rgba_unmultiplied(0, 0, 0, (92.0 * hud_alpha) as u8);
+        let dark = Color32::from_rgba_unmultiplied(0, 0, 0, (204.0 * hud_alpha) as u8);
+        vig.colored_vertex(Pos2::new(ctrl_bounds.left(), vig_top), clear);
+        vig.colored_vertex(Pos2::new(ctrl_bounds.right(), vig_top), clear);
+        vig.colored_vertex(Pos2::new(ctrl_bounds.right(), vig_mid), mid);
+        vig.colored_vertex(Pos2::new(ctrl_bounds.left(), vig_mid), mid);
+        vig.colored_vertex(ctrl_bounds.right_bottom(), dark);
+        vig.colored_vertex(ctrl_bounds.left_bottom(), dark);
+        vig.add_triangle(0, 1, 2);
+        vig.add_triangle(0, 2, 3);
+        vig.add_triangle(3, 2, 4);
+        vig.add_triangle(3, 4, 5);
+        ui.painter().add(vig);
+    }
 
     let play_click_rect = Rect::from_min_max(
         click_rect.left_top(),
@@ -5530,45 +5811,48 @@ fn render_player_controls_overlay(
         }
     }
 
-    let scrub_rect = Rect::from_min_max(
-        Pos2::new(ctrl_bounds.left() + 14.0, ctrl_bounds.bottom() - 56.0),
-        Pos2::new(ctrl_bounds.right() - 14.0, ctrl_bounds.bottom() - 40.0),
-    );
-    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(scrub_rect), |ui| {
-        let t_min = state.trim_start_secs.clamp(0.0, dur);
-        let t_max = state.trim_end_secs.clamp((t_min + 0.1).min(dur), dur);
-        let mut pos = state.player_pos_secs.clamp(t_min, t_max);
-        if custom_slider(ui, "player_scrub", &mut pos, 0.0, dur, ac) {
-            let clamped = pos.clamp(t_min, t_max);
-            state.player_pos_secs = clamped;
-            if let Some(dec) = &state.decoder {
-                dec.seek(clamped);
-            }
-        }
-    });
+    if hud_alpha <= 0.01 {
+        return;
+    }
 
-    let ctrl_rect = Rect::from_min_max(
-        Pos2::new(ctrl_bounds.left() + 14.0, ctrl_bounds.bottom() - 36.0),
-        Pos2::new(ctrl_bounds.right() - 14.0, ctrl_bounds.bottom() - 8.0),
-    );
-    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(ctrl_rect), |ui| {
+    ui.scope(|ui| {
+        ui.multiply_opacity(hud_alpha);
+        let scrub_rect = Rect::from_min_max(
+            Pos2::new(ctrl_bounds.left() + 14.0, ctrl_bounds.bottom() - 56.0),
+            Pos2::new(ctrl_bounds.right() - 14.0, ctrl_bounds.bottom() - 40.0),
+        );
+        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(scrub_rect), |ui| {
+            ui.set_opacity(hud_alpha);
+            let t_min = state.trim_start_secs.clamp(0.0, dur);
+            let t_max = state.trim_end_secs.clamp((t_min + 0.1).min(dur), dur);
+            let mut pos = state.player_pos_secs.clamp(t_min, t_max);
+            if custom_slider_ex(ui, "player_scrub", &mut pos, 0.0, dur, ac, 1.25, 4.0) {
+                let clamped = pos.clamp(t_min, t_max);
+                state.player_pos_secs = clamped;
+                if let Some(dec) = &state.decoder {
+                    dec.seek(clamped);
+                }
+            }
+        });
+
+        let ctrl_rect = Rect::from_min_max(
+            Pos2::new(ctrl_bounds.left() + 14.0, ctrl_bounds.bottom() - 36.0),
+            Pos2::new(ctrl_bounds.right() - 14.0, ctrl_bounds.bottom() - 8.0),
+        );
+        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(ctrl_rect), |ui| {
+        ui.set_opacity(hud_alpha);
         ui.horizontal_centered(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
 
             let (pp_r, pp_resp) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::click());
             ui.painter().rect_filled(
                 pp_r,
-                Rounding::same(7.0),
+                Rounding::same(8.0),
                 if pp_resp.hovered() {
-                    Color32::from_rgba_unmultiplied(46, 54, 72, 230)
+                    Color32::from_rgba_unmultiplied(255, 255, 255, 24)
                 } else {
-                    Color32::from_rgba_unmultiplied(28, 34, 46, 220)
+                    Color32::TRANSPARENT
                 },
-            );
-            ui.painter().rect_stroke(
-                pp_r,
-                Rounding::same(7.0),
-                Stroke::new(1.0_f32, border_col()),
             );
             paint_icon(
                 ui.painter(),
@@ -5590,17 +5874,12 @@ fn render_player_controls_overlay(
             let (sp_r, sp_resp) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::click());
             ui.painter().rect_filled(
                 sp_r,
-                Rounding::same(7.0),
+                Rounding::same(8.0),
                 if sp_resp.hovered() {
-                    Color32::from_rgba_unmultiplied(46, 54, 72, 230)
+                    Color32::from_rgba_unmultiplied(255, 255, 255, 24)
                 } else {
-                    Color32::from_rgba_unmultiplied(28, 34, 46, 220)
+                    Color32::TRANSPARENT
                 },
-            );
-            ui.painter().rect_stroke(
-                sp_r,
-                Rounding::same(7.0),
-                Stroke::new(1.0_f32, border_col()),
             );
             paint_icon(
                 ui.painter(),
@@ -5618,7 +5897,7 @@ fn render_player_controls_overlay(
                 } else {
                     state.player_volume
                 };
-                if custom_slider(ui, "player_vol_slider", &mut vol, 0.0, 1.0, ac) {
+                if custom_slider_ex(ui, "player_vol_slider", &mut vol, 0.0, 1.0, ac, 1.25, 4.0) {
                     state.player_volume = vol;
                     state.player_muted = vol <= 0.01;
                 }
@@ -5638,17 +5917,12 @@ fn render_player_controls_overlay(
                 let (fs_r, fs_resp) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::click());
                 ui.painter().rect_filled(
                     fs_r,
-                    Rounding::same(7.0),
+                    Rounding::same(8.0),
                     if fs_resp.hovered() {
-                        Color32::from_rgba_unmultiplied(46, 54, 72, 230)
+                        Color32::from_rgba_unmultiplied(255, 255, 255, 24)
                     } else {
-                        Color32::from_rgba_unmultiplied(28, 34, 46, 220)
+                        Color32::TRANSPARENT
                     },
-                );
-                ui.painter().rect_stroke(
-                    fs_r,
-                    Rounding::same(7.0),
-                    Stroke::new(1.0_f32, border_col()),
                 );
                 paint_icon(
                     ui.painter(),
@@ -5675,6 +5949,7 @@ fn render_player_controls_overlay(
             });
         });
     });
+    });
 }
 
 fn render_clip_context_menu(ctx: &egui::Context, state: &mut RewindUiState, now_secs: f64) {
@@ -5692,7 +5967,7 @@ fn render_clip_context_menu(ctx: &egui::Context, state: &mut RewindUiState, now_
     }
 
     let screen = ctx.screen_rect();
-    let menu_size = Vec2::new(196.0, 138.0);
+    let menu_size = Vec2::new(196.0, 128.0);
     let anim_t = anim_open_progress(
         ctx,
         Id::new("ctx_menu_open_anim"),
@@ -5712,20 +5987,23 @@ fn render_clip_context_menu(ctx: &egui::Context, state: &mut RewindUiState, now_
         .show(ctx, |ui| {
             ui.set_opacity(anim_t);
             egui::Frame::none()
-                .fill(Color32::from_rgb(20, 25, 36))
-                .stroke(Stroke::new(1.0_f32, border_bright()))
-                .rounding(Rounding::same(14.0))
-                .inner_margin(Margin::same(6.0))
+                .fill(Color32::from_rgba_unmultiplied(18, 20, 26, 232))
+                .stroke(Stroke::new(
+                    1.0_f32,
+                    Color32::from_rgba_unmultiplied(255, 255, 255, 20),
+                ))
+                .rounding(Rounding::same(9.0))
+                .inner_margin(Margin::same(5.0))
                 .shadow(Shadow {
-                    offset: Vec2::new(0.0, 10.0),
-                    blur: 24.0,
-                    spread: 2.0,
-                    color: Color32::from_rgba_unmultiplied(0, 0, 0, (150.0 * anim_t) as u8),
+                    offset: Vec2::new(0.0, 14.0),
+                    blur: 32.0,
+                    spread: 4.0,
+                    color: Color32::from_rgba_unmultiplied(0, 0, 0, (175.0 * anim_t) as u8),
                 })
                 .show(ui, |ui| {
-                    ui.set_min_size(menu_size - Vec2::splat(14.0));
-                    ui.set_max_width(menu_size.x - 12.0);
-                    ui.spacing_mut().item_spacing.y = 4.0;
+                    ui.set_min_size(menu_size - Vec2::splat(10.0));
+                    ui.set_max_width(menu_size.x - 10.0);
+                    ui.spacing_mut().item_spacing.y = 2.0;
 
                     if context_menu_item(ui, UiIcon::Edit, "Edit Clip Name", TEXT_PRIMARY) {
                         state.rename_modal_clip = Some((clip_id, clip.title.clone()));
@@ -5763,6 +6041,16 @@ fn render_clip_context_menu(ctx: &egui::Context, state: &mut RewindUiState, now_
                         state.clip_context_menu = None;
                     }
 
+                    let (div_r, _) =
+                        ui.allocate_exact_size(Vec2::new(ui.available_width(), 5.0), Sense::hover());
+                    ui.painter().line_segment(
+                        [
+                            Pos2::new(div_r.left() + 4.0, div_r.center().y),
+                            Pos2::new(div_r.right() - 4.0, div_r.center().y),
+                        ],
+                        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 20)),
+                    );
+
                     let del_col = Color32::from_rgb(244, 63, 94);
                     if context_menu_item(ui, UiIcon::Trash, "Delete", del_col) {
                         state.clip_context_menu = None;
@@ -5796,9 +6084,13 @@ fn context_menu_item_ex(
     disabled_tooltip: Option<&str>,
 ) -> bool {
     let sense = if enabled { Sense::click() } else { Sense::hover() };
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), sense);
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), sense);
     if enabled && resp.hovered() {
-        ui.painter().rect_filled(rect, Rounding::same(8.0), card_hover());
+        ui.painter().rect_filled(
+            rect,
+            Rounding::same(6.0),
+            Color32::from_rgba_unmultiplied(255, 255, 255, 15),
+        );
     }
     let ic_r = Rect::from_center_size(Pos2::new(rect.left() + 16.0, rect.center().y), Vec2::splat(13.0));
     paint_icon(ui.painter(), ic_r, icon, color);
@@ -5833,7 +6125,7 @@ fn render_close_notice_modal(ctx: &egui::Context, state: &mut RewindUiState) {
     let ac = accent.color();
     let screen = ctx.screen_rect();
     let modal_w = 430.0_f32.min(screen.width() - 48.0);
-    let modal_h = 192.0_f32;
+    let modal_h = 160.0_f32;
     let modal_rect = Rect::from_center_size(screen.center(), Vec2::new(modal_w, modal_h));
 
     egui::Area::new(Id::new("close_recording_notice"))
@@ -5861,7 +6153,7 @@ fn render_close_notice_modal(ctx: &egui::Context, state: &mut RewindUiState) {
             );
 
             ui.allocate_new_ui(
-                egui::UiBuilder::new().max_rect(modal_rect.shrink2(Vec2::new(22.0, 20.0))),
+                egui::UiBuilder::new().max_rect(modal_rect.shrink2(Vec2::new(22.0, 18.0))),
                 |ui| {
                     ui.vertical(|ui| {
                         ui.label(
@@ -5878,14 +6170,14 @@ fn render_close_notice_modal(ctx: &egui::Context, state: &mut RewindUiState) {
                             .size(12.5)
                             .color(TEXT_MUTED),
                         );
-                        ui.add_space(18.0);
+                        ui.add_space(16.0);
                         let chk_id = Id::new("dont_remind_close_chk");
                         let mut dont_remind = ui
                             .ctx()
                             .data_mut(|d| d.get_temp::<bool>(chk_id).unwrap_or(false));
-                        ui.horizontal(|ui| {
+                        ui.horizontal_centered(|ui| {
                             let (c_rect, c_resp) =
-                                ui.allocate_exact_size(Vec2::new(170.0, 26.0), Sense::click());
+                                ui.allocate_exact_size(Vec2::new(166.0, 32.0), Sense::click());
                             let box_r = Rect::from_center_size(
                                 Pos2::new(c_rect.left() + 9.0, c_rect.center().y),
                                 Vec2::splat(16.0),
@@ -5987,30 +6279,62 @@ fn paint_game_badge(
     }
 }
 
-fn paint_preload_overlay(painter: &egui::Painter, rect: Rect, pct: f32, accent: Color32) {
-    let pill = Rect::from_center_size(rect.center(), Vec2::new(220.0, 56.0));
+fn paint_preload_overlay(painter: &egui::Painter, rect: Rect, _pct: f32, accent: Color32) {
+    let t = painter.ctx().input(|i| i.time);
+    painter.ctx().request_repaint();
+
+    let sb = sidebar_bg();
     painter.rect_filled(
-        pill,
-        Rounding::same(10.0),
-        Color32::from_rgba_unmultiplied(12, 15, 22, 228),
+        rect,
+        Rounding::same(12.0),
+        Color32::from_rgba_unmultiplied(sb.r(), sb.g(), sb.b(), 234),
     );
-    painter.rect_stroke(pill, Rounding::same(10.0), Stroke::new(1.0_f32, border_bright()));
-    let shown = (pct.clamp(0.0, 1.0) * 100.0).round() as u32;
+
+    let center = rect.center() - Vec2::new(0.0, 12.0);
+    let r = 20.0_f32;
+    painter.circle_stroke(
+        center,
+        r,
+        Stroke::new(3.5_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 20)),
+    );
+
+    let tau = std::f32::consts::TAU;
+    let base_rot = ((t / 2.0) as f32).fract() * tau;
+    let phase = ((t / 1.45) as f32).fract();
+    let ease = |x: f32| {
+        let x = x.clamp(0.0, 1.0);
+        x * x * (3.0 - 2.0 * x)
+    };
+    let (arc_span, arc_off) = if phase < 0.5 {
+        let u = ease(phase * 2.0);
+        (0.03 + u * 0.60, u * 0.24)
+    } else {
+        let u = ease((phase - 0.5) * 2.0);
+        (0.63 - u * 0.60, 0.24 + u * 0.76)
+    };
+
+    let start_a = base_rot + arc_off * tau;
+    let sweep = arc_span * tau;
+    let steps = 32_usize;
+    let pts: Vec<Pos2> = (0..=steps)
+        .map(|i| {
+            let a = start_a + (i as f32 / steps as f32) * sweep;
+            Pos2::new(center.x + a.cos() * r, center.y + a.sin() * r)
+        })
+        .collect();
+    if let (Some(&first), Some(&last)) = (pts.first(), pts.last()) {
+        painter.circle_filled(first, 1.75, accent);
+        painter.circle_filled(last, 1.75, accent);
+    }
+    painter.add(egui::Shape::line(pts, Stroke::new(3.5_f32, accent)));
+
     painter.text(
-        Pos2::new(pill.center().x, pill.top() + 18.0),
+        center + Vec2::new(0.0, 36.0),
         egui::Align2::CENTER_CENTER,
-        format!("Preloading video... {shown}%"),
-        FontId::proportional(12.5),
-        TEXT_PRIMARY,
+        "Loading",
+        FontId::proportional(13.0),
+        TEXT_MUTED,
     );
-    let track = Rect::from_min_size(
-        Pos2::new(pill.left() + 18.0, pill.bottom() - 16.0),
-        Vec2::new(pill.width() - 36.0, 5.0),
-    );
-    painter.rect_filled(track, Rounding::same(2.5), Color32::from_rgb(36, 44, 58));
-    let fill_w = (track.width() * pct.clamp(0.02, 1.0)).max(4.0);
-    let fill = Rect::from_min_size(track.left_top(), Vec2::new(fill_w, track.height()));
-    painter.rect_filled(fill, Rounding::same(2.5), accent);
 }
 
 fn render_rename_clip_modal(ctx: &egui::Context, state: &mut RewindUiState, now_secs: f64) {

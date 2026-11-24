@@ -211,7 +211,7 @@ impl DxvaVideoBlitter {
                 _bitfield: (yuv_matrix_bit << 2) | (nominal_range << 4),
             };
             let out_cs = D3D11_VIDEO_PROCESSOR_COLOR_SPACE {
-                _bitfield: 1 << 4,
+                _bitfield: 2 << 4,
             };
             self.video_context
                 .VideoProcessorSetStreamColorSpace(&processor, 0, &stream_cs);
@@ -537,7 +537,7 @@ impl HwVideoReader {
                     stride: 1280,
                     fps_num: 60,
                     yuv_matrix_bit: 1,
-                    nominal_range: 2,
+                    nominal_range: 1,
                     is_nv12: true,
                 };
                 me.refresh_media_type();
@@ -607,7 +607,7 @@ impl HwVideoReader {
                         stride: 1280,
                         fps_num: 60,
                         yuv_matrix_bit: 1,
-                        nominal_range: 2,
+                        nominal_range: 1,
                         is_nv12: false,
                     };
                     me.refresh_media_type();
@@ -625,7 +625,7 @@ impl HwVideoReader {
                     stride: 1280,
                     fps_num: 60,
                     yuv_matrix_bit: 1,
-                    nominal_range: 2,
+                    nominal_range: 1,
                     is_nv12: true,
                 };
                 me.refresh_media_type();
@@ -686,8 +686,8 @@ impl HwVideoReader {
                 }
             };
             self.nominal_range = match cur_mt.GetUINT32(&MF_MT_VIDEO_NOMINAL_RANGE) {
-                Ok(1) => 1,
-                _ => 2,
+                Ok(1) => 2,
+                _ => 1,
             };
         }
     }

@@ -13,6 +13,10 @@ use windows::Win32::Graphics::Gdi::{
     CreateBitmap, CreateDIBSection, DeleteObject, GetMonitorInfoW, MonitorFromWindow, BITMAPINFO,
     BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HDC, HGDIOBJ, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
+use windows::Win32::Storage::FileSystem::{
+    GetFileAttributesW, SetFileAttributesW, FILE_ATTRIBUTE_HIDDEN, FILE_FLAGS_AND_ATTRIBUTES,
+    INVALID_FILE_ATTRIBUTES,
+};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_ALL,
     COINIT_APARTMENTTHREADED,
@@ -413,6 +417,38 @@ pub fn is_rewind_ui_open() -> bool {
     }
 }
 
+pub fn acquire_ui_single_instance_or_focus() -> Option<isize> {
+    unsafe {
+        let name = to_wide_null("Local\\RewindUiSingleInstance");
+        let h = windows::Win32::System::Threading::CreateMutexW(
+            None,
+            false,
+            PCWSTR(name.as_ptr()),
+        )
+        .ok()?;
+        let already = windows::Win32::Foundation::GetLastError()
+            == windows::Win32::Foundation::ERROR_ALREADY_EXISTS;
+        if already {
+            let _ = windows::Win32::Foundation::CloseHandle(h);
+            let title = to_wide_null("Rewind");
+            let hwnd = windows::Win32::UI::WindowsAndMessaging::FindWindowW(
+                PCWSTR::null(),
+                PCWSTR(title.as_ptr()),
+            )
+            .unwrap_or_default();
+            if !hwnd.0.is_null() {
+                let _ = windows::Win32::UI::WindowsAndMessaging::ShowWindow(
+                    hwnd,
+                    windows::Win32::UI::WindowsAndMessaging::SW_RESTORE,
+                );
+                let _ = windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow(hwnd);
+            }
+            return None;
+        }
+        Some(h.0 as isize)
+    }
+}
+
 const RUN_REG_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 const RUN_REG_VAL: &str = "RewindCaptureDaemon";
 
@@ -604,5 +640,22 @@ fn parse_vk(name: &str) -> Option<u16> {
             }
         }
         _ => None,
+    }
+}
+
+pub fn hide_path(path: &Path) {
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    unsafe {
+        let attrs = GetFileAttributesW(PCWSTR(wide.as_ptr()));
+        if attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_HIDDEN.0) == 0 {
+            let _ = SetFileAttributesW(
+                PCWSTR(wide.as_ptr()),
+                FILE_FLAGS_AND_ATTRIBUTES(attrs | FILE_ATTRIBUTE_HIDDEN.0),
+            );
+        }
     }
 }

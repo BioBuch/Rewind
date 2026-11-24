@@ -108,7 +108,7 @@ pub fn build_activity_strings(
 ) -> (String, String) {
     let details = match (active_game, replay_on) {
         (Some(game), _) => format!("Clipping {game}"),
-        (None, true) => "Clipping Desktop".to_owned(),
+        (None, true) => "Idle · Ready to Clip".to_owned(),
         (None, false) => "Idle · Ready to Clip".to_owned(),
     };
     let state = if replay_on {
@@ -188,6 +188,14 @@ mod tests {
         let (details, state) = build_activity_strings(Some("Fortnite"), true, "1080p", 120);
         assert_eq!(details, "Clipping Fortnite");
         assert_eq!(state, "with Rewind");
+        assert_eq!(
+            build_activity_strings(Some("Desktop"), true, "1080p", 120).0,
+            "Clipping Desktop"
+        );
+        assert_eq!(
+            build_activity_strings(None, true, "1080p", 120).0,
+            "Idle · Ready to Clip"
+        );
 
         let json_str = build_set_activity_json(1234, 7, &details, &state, 1_700_000_000);
         let frame = encode_ipc_frame(1, json_str.as_bytes());

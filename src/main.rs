@@ -80,6 +80,9 @@ fn apply_dark_fluent_visuals(ctx: &egui::Context) {
 }
 
 fn main() -> eframe::Result<()> {
+    let Some(_ui_guard) = rewind::win_ffi::acquire_ui_single_instance_or_focus() else {
+        return Ok(());
+    };
     std::panic::set_hook(Box::new(|info| {
         let log_path = rewind::config::AppConfig::app_data_dir().join("ui_panic.log");
         let _ = std::fs::write(&log_path, format!("{info}\n"));

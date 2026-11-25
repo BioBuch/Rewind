@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 pub struct DiscordRpcClient {
     pipe: Option<File>,
     connected_client_id: String,
-    nonce: u64,
+    req_seq: u64,
 }
 
 impl DiscordRpcClient {
@@ -14,7 +14,7 @@ impl DiscordRpcClient {
         Self {
             pipe: None,
             connected_client_id: String::new(),
-            nonce: 0,
+            req_seq: 0,
         }
     }
 
@@ -63,10 +63,10 @@ impl DiscordRpcClient {
         if !self.ensure_connected(client_id) {
             return false;
         }
-        self.nonce = self.nonce.wrapping_add(1);
+        self.req_seq = self.req_seq.wrapping_add(1);
         let payload = build_set_activity_json(
             std::process::id(),
-            self.nonce,
+            self.req_seq,
             details,
             state,
             start_unix,
@@ -89,11 +89,11 @@ impl DiscordRpcClient {
         let Some(f) = self.pipe.as_mut() else {
             return;
         };
-        self.nonce = self.nonce.wrapping_add(1);
+        self.req_seq = self.req_seq.wrapping_add(1);
         let payload = json!({
             "cmd": "SET_ACTIVITY",
             "args": { "pid": std::process::id() },
-            "nonce": format!("rewind-{}", self.nonce)
+            "nonce": format!("rewind-{}", self.req_seq)
         })
         .to_string();
         if write_frame(f, 1, payload.as_bytes()).is_err() {
@@ -125,7 +125,7 @@ pub fn build_activity_strings(
 
 pub fn build_set_activity_json(
     pid: u32,
-    nonce: u64,
+    req_id: u64,
     details: &str,
     state: &str,
     start_unix: i64,
@@ -150,7 +150,7 @@ pub fn build_set_activity_json(
                 ]
             }
         },
-        "nonce": format!("rewind-{nonce}")
+        "nonce": format!("rewind-{req_id}")
     })
     .to_string()
 }

@@ -16,13 +16,36 @@
 
 Rewind captures your gameplay in the background using a rolling RAM buffer and saves crisp, synchronized MP4 clips on a single keypress — without cloud accounts, telemetry, or heavy overlays.
 
-## Highlights
+## Features
 
-- **Zero-lag Instant Replay** — Keeps your recent gameplay in RAM via DXGI Desktop Duplication and hardware encoding (`NVENC`, `AMF`, `QuickSync`) up to `4K 120fps`.
-- **Synced Game & Mic Audio** — Captures system loopback and microphone in lockstep so audio stays aligned with video.
-- **Built-in Clip Editor & Discord Export** — Scrub frame-by-frame, trim losslessly, or compress clips up to `60s` straight under `10 MB` for Discord.
-- **Lightweight Game Detection** — Matches foreground window titles and classes only; never opens game process handles or injects hooks.
-- **Clean Native UI** — Lightweight Rust + `egui` interface that closes completely when you are done and leaves only the tray daemon running.
+### Capture & Performance
+- **Zero-Lag RAM Ring Buffer** — Keeps the last `15s`–`5m` in system RAM (`64–768 MB` budget) so your SSD isn't constantly worn down by temp writes.
+- **Any-GPU Hardware Encoding** — Works on **NVIDIA (`NVENC`)**, **AMD (`AMF`)**, and **Intel (`QuickSync`)** via Windows Media Foundation, supporting `HEVC`, hardware `AV1`, and `H.264` up to `4K 120fps` in `.mp4` or `.mkv` (`CQP` or `CBR`).
+- **GPU CAS Sharpening** — Optional Direct3D 11 Contrast-Adaptive Sharpening compute shader (`Light` / `Medium`) applied directly on the GPU before encoding.
+- **Post-Clip Reaction Buffer** — Add `+5s`, `+10s`, or `+15s` after pressing your save hotkey so you never cut off your friends' reactions.
+- **Hook-Free Game Detection** — Detects active games via foreground window titles and classes (`SetWinEventHook`) only. Never opens game process handles, reads memory, or injects overlay DLLs. Supports custom/ignored game lists and manual `Desktop` capture.
+
+### Audio, Editing & Sharing
+- **Synced Game & Mic Audio** — Captures WASAPI system loopback and microphone in lockstep with device selection, independent volume sliders, a global mic-mute hotkey (`Ctrl+M`), and optional **separate audio tracks** for editing.
+- **1-Click Discord `< 10 MB` Export** — Automatically calculates bitrate, resolution, and framerate to compress any clip (or trimmed range) strictly under Discord's `10 MB` free upload limit.
+- **Lossless Quick Trim & `9:16` Vertical** — Hardware-decoded clip player with frame scrubbing, instant lossless IDR-keyframe MP4 trimming (non-blocking so live replay keeps recording), and a `9:16` vertical export option.
+
+### Library, Design & Zero Bloat
+- **Split Tray Daemon + Ephemeral UI** — Pure Rust + `egui` with no Electron, Chromium, Overwolf, or bundled `ffmpeg.exe`. Closing the window exits the UI completely (`0 MB` UI RAM) while the tray daemon stays active.
+- **SQLite Clip Library & Auto-Cleanup** — Auto-generated thumbnails, per-game folders, search, sorting, favorites, collections, an 8-second **Undo Delete**, and automatic cleanup of oldest non-favorite clips at your storage limit.
+- **Custom Looks, SteamGridDB & Discord RPC** — Set a custom wallpaper with blur/brightness and auto-extracted accent colors, pull game icons via SteamGridDB, show live status on Discord Rich Presence, and update in one click from GitHub Releases.
+
+## How Rewind Compares
+
+| Feature | Rewind | Medal / Outplayed | ShadowPlay / ReLive | OBS Studio |
+| :--- | :---: | :---: | :---: | :---: |
+| **100% Local, Free & Open Source** | ✅ GPL-3.0 | ❌ Ads / Paywalls | ❌ Proprietary | ✅ GPL-2.0 |
+| **Any GPU (`NVENC` / `AMF` / `QSV`)** | ✅ | ✅ | ❌ Vendor-locked | ✅ |
+| **No Electron / Overwolf Bloat** | ✅ Native Rust | ❌ | ✅ | ✅ |
+| **RAM Ring Buffer (SSD-friendly)** | ✅ | ❌ Disk | ❌ Disk | ✅ |
+| **1-Click Discord `< 10 MB` Export** | ✅ | ❌ Paid / Cloud | ❌ | ❌ |
+| **Built-in Library & Lossless Trim** | ✅ | ✅ | ⚠️ Basic | ❌ |
+| **No DLL / Overlay Injection** | ✅ | ❌ | ⚠️ Overlay | ⚠️ Game Capture |
 
 ## Install
 

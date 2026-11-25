@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -28,835 +28,548 @@
   }
   </script>
   <link rel="icon" type="image/png" href="./icon.png" />
+  <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.23/dist/full.min.css" rel="stylesheet" type="text/css" />
+  <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    :root {
-      --bg: #090b10;
-      --surface: #11131a;
-      --surface-2: #151821;
-      --elevated: #1a1e29;
-      --elevated-hover: #232836;
-      --border: rgba(255, 255, 255, 0.08);
-      --border-strong: rgba(255, 255, 255, 0.16);
-      --text: #eef2f8;
-      --muted: #939eb2;
-      --dim: #667287;
-      --accent: #4c8dff;
-      --accent-soft: rgba(76, 141, 255, 0.14);
-      --green: #34d399;
-      --radius: 12px;
+    :root, [data-theme="dark"] {
+      --b1: 240 10% 3.9%;
+      --b2: 240 6% 8%;
+      --b3: 240 5% 13%;
+      --bc: 0 0% 98%;
+      --p: 217 91% 60%;
+      --pc: 0 0% 100%;
+      --su: 160 84% 39%;
+      --suc: 0 0% 100%;
     }
 
-    * { box-sizing: border-box; margin: 0; padding: 0; }
     html { scroll-behavior: smooth; }
 
     body {
-      font-family: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
-      background:
-        radial-gradient(1000px 520px at 50% -12%, rgba(76, 141, 255, 0.16), transparent 70%),
-        radial-gradient(700px 420px at 85% 22%, rgba(52, 211, 153, 0.06), transparent 65%),
-        var(--bg);
-      color: var(--text);
-      line-height: 1.58;
+      background-color: #09090b;
+      background-image:
+        radial-gradient(ellipse 80% 50% at 50% -18%, rgba(76, 141, 255, 0.16), transparent),
+        radial-gradient(ellipse 55% 35% at 85% 18%, rgba(16, 185, 129, 0.08), transparent);
+      color: #fafafa;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       -webkit-font-smoothing: antialiased;
     }
 
-    a { color: inherit; text-decoration: none; }
-    code {
-      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-      font-size: 0.9em;
-      background: rgba(255, 255, 255, 0.06);
-      padding: 1px 5px;
-      border-radius: 5px;
-      color: #cfe0ff;
+    .reveal {
+      opacity: 0;
+      transform: translateY(20px);
+      transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1), transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+      will-change: opacity, transform;
     }
 
-    .wrap {
-      max-width: 1080px;
-      margin: 0 auto;
-      padding: 0 24px;
+    .reveal.is-visible {
+      opacity: 1;
+      transform: translateY(0);
     }
 
-    header {
-      position: sticky;
-      top: 0;
-      z-index: 30;
-      backdrop-filter: blur(16px);
-      background: rgba(9, 11, 16, 0.8);
-      border-bottom: 1px solid var(--border);
-    }
-
-    .nav {
-      height: 64px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-    }
-
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      font-weight: 700;
-      font-size: 16px;
-      letter-spacing: -0.01em;
-    }
-
-    .brand img {
-      width: 28px;
-      height: 28px;
-      border-radius: 7px;
-    }
-
-    .nav-links {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-
-    .btn-ghost {
-      display: inline-flex;
-      align-items: center;
-      gap: 7px;
-      padding: 8px 13px;
-      border-radius: 8px;
-      font-size: 13.5px;
-      font-weight: 500;
-      color: var(--muted);
-      transition: background 0.15s ease, color 0.15s ease;
-    }
-
-    .btn-ghost:hover {
-      background: rgba(255, 255, 255, 0.06);
-      color: var(--text);
-    }
-
-    .btn-primary {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 9px;
-      padding: 12px 22px;
-      border-radius: 9px;
-      background: #ffffff;
-      color: #0e121a;
-      font-size: 14px;
-      font-weight: 650;
-      box-shadow: 0 8px 24px rgba(255, 255, 255, 0.08);
-      transition: transform 0.14s ease, opacity 0.15s ease;
-    }
-
-    .btn-primary:hover { opacity: 0.93; transform: translateY(-1px); }
-
-    .btn-secondary {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      padding: 12px 20px;
-      border-radius: 9px;
-      background: var(--elevated);
-      border: 1px solid var(--border);
-      color: var(--text);
-      font-size: 14px;
-      font-weight: 550;
-      transition: background 0.15s ease, border-color 0.15s ease, transform 0.14s ease;
-    }
-
-    .btn-secondary:hover {
-      background: var(--elevated-hover);
-      border-color: var(--border-strong);
-      transform: translateY(-1px);
-    }
-
-    .hero {
-      padding: 74px 0 48px;
-      text-align: center;
-    }
-
-    .pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 5px 13px;
-      border-radius: 999px;
-      background: var(--elevated);
-      border: 1px solid var(--border);
-      color: var(--muted);
-      font-size: 12.5px;
-      margin-bottom: 22px;
-    }
-
-    .dot {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: var(--green);
-      box-shadow: 0 0 10px rgba(52, 211, 153, 0.75);
-    }
-
-    h1 {
-      font-size: clamp(34px, 5.2vw, 56px);
-      font-weight: 760;
-      line-height: 1.07;
-      letter-spacing: -0.03em;
-      max-width: 780px;
-      margin: 0 auto 18px;
-    }
-
-    .subtitle {
-      font-size: 17px;
-      color: var(--muted);
-      max-width: 650px;
-      margin: 0 auto 30px;
-    }
-
-    .hero-cta {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: center;
-      gap: 12px;
-      margin-bottom: 16px;
-    }
-
-    .meta-line {
-      font-size: 12.5px;
-      color: var(--dim);
-    }
-
-    .mockup {
-      margin: 42px auto 0;
-      background: linear-gradient(180deg, var(--surface-2) 0%, var(--surface) 100%);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 18px;
-      box-shadow: 0 30px 75px rgba(0, 0, 0, 0.58), inset 0 1px 0 rgba(255, 255, 255, 0.08);
-      text-align: left;
-    }
-
-    .mockup-bar {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      padding-bottom: 14px;
-      border-bottom: 1px solid var(--border);
-      margin-bottom: 16px;
-      font-size: 12.5px;
-      color: var(--muted);
-    }
-
-    .mockup-chips {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
-
-    .chip {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 5px 10px;
-      border-radius: 8px;
-      background: var(--elevated);
-      border: 1px solid var(--border);
-      color: var(--text);
-      font-size: 12px;
-    }
-
-    .mockup-stats {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 12px;
-    }
-
-    .stat {
-      background: var(--elevated);
-      border: 1px solid var(--border);
-      border-radius: 9px;
-      padding: 14px;
-    }
-
-    .stat-label { font-size: 12px; color: var(--dim); margin-bottom: 4px; }
-    .stat-val { font-size: 15px; font-weight: 600; color: var(--text); }
-
-    .showcase-tabs {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: center;
-      gap: 8px;
-      margin: 26px 0 14px;
-    }
-
-    .tab-btn {
-      padding: 8px 14px;
-      border-radius: 8px;
-      background: var(--elevated);
-      border: 1px solid var(--border);
-      color: var(--muted);
-      font-size: 13px;
-      font-weight: 550;
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-
-    .tab-btn:hover { color: var(--text); border-color: var(--border-strong); }
-    .tab-btn.active {
-      background: var(--accent-soft);
-      border-color: rgba(76, 141, 255, 0.5);
-      color: #ffffff;
-    }
-
-    .shot-frame {
-      background: var(--surface);
-      border: 1px solid var(--border-strong);
-      border-radius: 14px;
-      overflow: hidden;
-      box-shadow: 0 28px 80px rgba(0, 0, 0, 0.65);
-    }
-
-    .shot-frame img {
-      display: block;
-      width: 100%;
-      height: auto;
-    }
-
-    .shot-caption {
-      padding: 12px 18px;
-      border-top: 1px solid var(--border);
-      background: var(--surface-2);
-      font-size: 13px;
-      color: var(--muted);
-      display: flex;
-      justify-content: space-between;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
-
-    .ram-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 22px;
-      display: grid;
-      gap: 14px;
-    }
-
-    .ram-row {
-      display: grid;
-      grid-template-columns: 210px 1fr 140px;
-      align-items: center;
-      gap: 14px;
-      font-size: 13.5px;
-    }
-
-    .ram-name { font-weight: 600; color: var(--text); }
-    .ram-name small { display: block; font-weight: 400; font-size: 11.5px; color: var(--dim); }
-
-    .ram-track {
-      height: 14px;
-      background: rgba(255, 255, 255, 0.05);
-      border-radius: 999px;
-      overflow: hidden;
-      position: relative;
-    }
-
-    .ram-fill {
-      height: 100%;
-      border-radius: 999px;
-      background: rgba(147, 158, 178, 0.42);
-    }
-
-    .ram-fill.rewind {
-      background: linear-gradient(90deg, var(--green), var(--accent));
-      box-shadow: 0 0 16px rgba(52, 211, 153, 0.4);
-    }
-
-    .ram-val {
-      text-align: right;
-      font-variant-numeric: tabular-nums;
-      color: var(--muted);
-      font-size: 13px;
-    }
-
-    .ram-val.rewind { color: var(--green); font-weight: 650; }
-
-    .ram-note {
-      font-size: 12px;
-      color: var(--dim);
-      padding-top: 6px;
-      border-top: 1px solid var(--border);
-    }
-
-    section { padding: 48px 0; }
-
-    .section-head {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: flex-end;
-      justify-content: space-between;
-      gap: 12px;
-      margin-bottom: 24px;
-    }
-
-    .section-kicker {
-      display: inline-block;
-      font-size: 11.5px;
-      font-weight: 650;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: var(--accent);
-      margin-bottom: 6px;
-    }
-
-    .section-title {
-      font-size: 26px;
-      font-weight: 720;
-      letter-spacing: -0.02em;
-      margin-bottom: 6px;
-    }
-
-    .section-sub {
-      color: var(--muted);
-      font-size: 14.5px;
-      max-width: 640px;
-    }
-
-    .group-label {
-      font-size: 13px;
-      font-weight: 650;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      margin: 28px 0 12px;
-    }
-
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 14px;
-    }
-
-    .card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 20px;
-      transition: border-color 0.16s ease, transform 0.16s ease, background 0.16s ease;
-    }
-
-    .card:hover {
-      border-color: var(--border-strong);
-      background: var(--surface-2);
-      transform: translateY(-2px);
-    }
-
-    .card-badge {
-      display: inline-flex;
-      align-items: center;
-      padding: 3px 8px;
-      border-radius: 6px;
-      background: var(--accent-soft);
-      color: #8ab4ff;
-      font-size: 11px;
-      font-weight: 600;
-      margin-bottom: 10px;
-    }
-
-    .card h3 {
-      font-size: 15.5px;
-      font-weight: 650;
-      margin-bottom: 7px;
-      color: var(--text);
-    }
-
-    .card p {
-      font-size: 13.5px;
-      color: var(--muted);
-    }
-
-    .table-wrap {
-      overflow-x: auto;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-    }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 13.5px;
-      text-align: left;
-    }
-
-    th, td {
-      padding: 13px 16px;
-      border-bottom: 1px solid var(--border);
-    }
-
-    th {
-      font-size: 12.5px;
-      font-weight: 650;
-      color: var(--muted);
-      background: var(--surface-2);
-    }
-
-    tr:last-child td { border-bottom: none; }
-    td:first-child { font-weight: 600; color: var(--text); }
-    td:nth-child(2) { color: #d8f8ea; font-weight: 550; }
-    td:nth-child(n+3) { color: var(--muted); }
-
-    .notice-box {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 20px 22px;
-      font-size: 13.5px;
-      color: var(--muted);
-      display: grid;
-      gap: 11px;
-    }
-
-    .notice-box strong { color: var(--text); }
-
-    footer {
-      border-top: 1px solid var(--border);
-      padding: 28px 0 44px;
-      margin-top: 20px;
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: space-between;
-      align-items: center;
-      gap: 12px;
-      font-size: 13px;
-      color: var(--dim);
-    }
-
-    footer a:hover { color: var(--text); }
-
-    @media (max-width: 900px) {
-      .mockup-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    }
-
-      @media (max-width: 640px) {
-      .grid, .mockup-stats { grid-template-columns: 1fr; }
-      .ram-row { grid-template-columns: 1fr; gap: 6px; }
-      .ram-val { text-align: left; }
-      .hero { padding: 52px 0 34px; }
-      .nav-links .hide-sm { display: none; }
+    @media (prefers-reduced-motion: reduce) {
+      .reveal { opacity: 1; transform: none; transition: none; }
     }
   </style>
 </head>
-<body>
-  <header>
-    <div class="wrap nav">
-      <a class="brand" href="#">
-        <img src="./icon.png" alt="Rewind" />
-        <span>Rewind</span>
-      </a>
-      <nav class="nav-links">
-        <a class="btn-ghost" href="#preview">Preview</a>
-        <a class="btn-ghost" href="#features">Features</a>
-        <a class="btn-ghost hide-sm" href="#memory">RAM</a>
-        <a class="btn-ghost hide-sm" href="#compare">Compare</a>
-        <a class="btn-ghost" href="https://github.com/BioBuch/Rewind" target="_blank" rel="noopener">GitHub</a>
-        <a class="btn-ghost" href="https://ko-fi.com/rewindapp" target="_blank" rel="noopener">Ko-fi</a>
-      </nav>
+<body class="min-h-screen antialiased selection:bg-blue-500/30 selection:text-white">
+  <header class="sticky top-0 z-40 border-b border-zinc-800/80 bg-zinc-950/80 backdrop-blur-xl">
+    <div class="navbar max-w-6xl mx-auto px-4 min-h-14">
+      <div class="navbar-start">
+        <a href="#" class="flex items-center gap-2.5 font-semibold tracking-tight text-zinc-100 hover:opacity-90 transition">
+          <img src="./icon.png" alt="Rewind" class="w-6 h-6 rounded-md" />
+          <span>Rewind</span>
+        </a>
+      </div>
+      <div class="navbar-end gap-1">
+        <a href="#preview" class="btn btn-ghost btn-sm text-zinc-400 hover:text-zinc-100 font-medium">Preview</a>
+        <a href="#features" class="btn btn-ghost btn-sm text-zinc-400 hover:text-zinc-100 font-medium">Features</a>
+        <a href="#memory" class="btn btn-ghost btn-sm text-zinc-400 hover:text-zinc-100 font-medium hidden sm:inline-flex">RAM</a>
+        <a href="#compare" class="btn btn-ghost btn-sm text-zinc-400 hover:text-zinc-100 font-medium hidden sm:inline-flex">Compare</a>
+        <a href="https://github.com/BioBuch/Rewind" target="_blank" rel="noopener" class="btn btn-ghost btn-sm text-zinc-400 hover:text-zinc-100 font-medium">GitHub</a>
+        <a href="https://ko-fi.com/rewindapp" target="_blank" rel="noopener" class="btn btn-ghost btn-sm text-zinc-400 hover:text-zinc-100 font-medium">Ko-fi</a>
+      </div>
     </div>
   </header>
 
-  <main class="wrap">
-    <section class="hero">
-      <div class="pill">
-        <span class="dot"></span>
-        <span id="version-badge">Windows 11 x64 • Open Source (GPL-3.0)</span>
+  <main class="max-w-6xl mx-auto px-4 sm:px-6">
+    <!-- Hero -->
+    <section class="pt-16 pb-10 text-center">
+      <div class="badge badge-outline border-zinc-800 bg-zinc-900/70 text-zinc-300 gap-2 py-3 px-3.5 text-xs font-medium">
+        <span class="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]"></span>
+        <span id="version-badge">v1.1.1 • Windows 11 x64 • GPL-3.0</span>
       </div>
-      <h1>Instant gameplay replay without the bloat.</h1>
-      <p class="subtitle">
-        Rewind is a fast, local-only Windows 11 clipper written in pure Rust. Keep a rolling buffer in RAM, capture on any GPU, trim losslessly, and export under 10 MB for Discord.
+
+      <h1 class="mt-6 text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight leading-[1.07] max-w-3xl mx-auto bg-gradient-to-b from-white via-zinc-100 to-zinc-400 bg-clip-text text-transparent">
+        Instant gameplay replay without the bloat.
+      </h1>
+
+      <p class="mt-5 text-base sm:text-lg text-zinc-400 max-w-2xl mx-auto leading-relaxed">
+        A fast, local-only Windows 11 clipper written in pure Rust. Keep a rolling buffer in RAM, capture on any GPU, trim losslessly, and export under 10 MB for Discord.
       </p>
-      <div class="hero-cta">
-        <a id="dl-btn" class="btn-primary" href="https://github.com/BioBuch/Rewind/releases/latest/download/Rewind-Setup-x64.exe">
+
+      <div class="mt-8 flex flex-wrap items-center justify-center gap-3">
+        <a id="dl-btn" href="https://github.com/BioBuch/Rewind/releases/latest/download/Rewind-Setup-x64.exe" class="btn bg-zinc-100 hover:bg-white text-zinc-950 border-none px-6 font-semibold shadow-lg shadow-white/5">
           Download Rewind-Setup-x64.exe
         </a>
-        <a class="btn-secondary" href="https://github.com/BioBuch/Rewind" target="_blank" rel="noopener">
+        <a href="https://github.com/BioBuch/Rewind" target="_blank" rel="noopener" class="btn btn-outline border-zinc-800 hover:bg-zinc-900 hover:border-zinc-700 text-zinc-200 px-5 font-medium">
           Star on GitHub
         </a>
       </div>
-      <p class="meta-line">
+
+      <p class="mt-4 text-xs text-zinc-500">
         Windows 11 (x64) • NVIDIA NVENC, AMD AMF, or Intel QuickSync • No accounts, no ads, no telemetry.
       </p>
 
-      <div class="mockup">
-        <div class="mockup-bar">
-          <div class="mockup-chips">
-            <span class="chip"><span class="dot"></span> Replay Active</span>
-            <span class="chip">Up to 4K 120fps • HEVC / AV1 / H.264</span>
-            <span class="chip">0 MB Idle UI</span>
-          </div>
-          <span id="release-note-link"><a href="https://github.com/BioBuch/Rewind/releases" target="_blank" rel="noopener">View Release Notes →</a></span>
+      <!-- Stats Strip -->
+      <div class="mt-10 stats stats-vertical sm:stats-horizontal w-full bg-zinc-900/60 border border-zinc-800/90 shadow-xl text-left">
+        <div class="stat py-4 px-5 border-zinc-800/80">
+          <div class="stat-title text-xs text-zinc-500">Idle Footprint</div>
+          <div class="stat-value text-base font-semibold text-emerald-400">~64 MB Daemon • 0 MB UI</div>
         </div>
-        <div class="mockup-stats">
-          <div class="stat">
-            <div class="stat-label">Buffer</div>
-            <div class="stat-val">15s–5m in System RAM</div>
-          </div>
-          <div class="stat">
-            <div class="stat-label">Capture Pipeline</div>
-            <div class="stat-val">WGC / DXGI + GPU MFT</div>
-          </div>
-          <div class="stat">
-            <div class="stat-label">Audio</div>
-            <div class="stat-val">WASAPI Dual Track</div>
-          </div>
-          <div class="stat">
-            <div class="stat-label">Discord Export</div>
-            <div class="stat-val">1-Click &lt; 10 MB</div>
-          </div>
+        <div class="stat py-4 px-5 border-zinc-800/80">
+          <div class="stat-title text-xs text-zinc-500">Capture Pipeline</div>
+          <div class="stat-value text-base font-semibold text-zinc-100">WGC / DXGI + GPU MFT</div>
+        </div>
+        <div class="stat py-4 px-5 border-zinc-800/80">
+          <div class="stat-title text-xs text-zinc-500">Audio</div>
+          <div class="stat-value text-base font-semibold text-zinc-100">WASAPI Dual Track</div>
+        </div>
+        <div class="stat py-4 px-5 border-zinc-800/80">
+          <div class="stat-title text-xs text-zinc-500">Discord Export</div>
+          <div class="stat-value text-base font-semibold text-zinc-100">1-Click &lt; 10 MB</div>
         </div>
       </div>
     </section>
 
-    <section id="preview" style="padding-top: 10px;">
-      <div class="showcase-tabs" role="tablist" aria-label="Rewind UI views">
-        <button class="tab-btn active" data-shot="./screenshots/home.png" data-cap="Home &amp; Game Decks — Auto-organized by game with Blue accent &amp; custom wallpaper">Home &amp; Games</button>
-        <button class="tab-btn" data-shot="./screenshots/library.png" data-cap="All Clips Library — Filter by game or favorites, sort, search, and tag resolutions">Clip Library</button>
-        <button class="tab-btn" data-shot="./screenshots/settings.png" data-cap="Capture &amp; Quality — NVENC / AMF / QuickSync, HEVC / AV1 / H.264, CQP, and GPU CAS Sharpening">Capture &amp; Quality</button>
-        <button class="tab-btn" data-shot="./screenshots/audio.png" data-cap="Dual-Track Audio — Independent WASAPI loopback &amp; mic volumes plus separate audio tracks">Audio Tracks</button>
-        <button class="tab-btn" data-shot="./screenshots/personalization.png" data-cap="Personalization — Custom wallpapers, blur/brightness, 5+ accent colors, and SteamGridDB icons">Personalization</button>
+    <!-- Interactive Screenshot Preview -->
+    <section id="preview" class="pb-12 text-center reveal">
+      <div role="tablist" aria-label="Rewind UI views" class="tabs tabs-boxed inline-flex flex-wrap justify-center bg-zinc-900/90 border border-zinc-800 p-1 rounded-xl mb-4">
+        <button role="tab" class="tab tab-active rounded-lg text-xs sm:text-sm font-medium text-zinc-100 bg-zinc-950" data-shot="./screenshots/home.png" data-cap="Home &amp; Game Decks — Auto-organized by game with Blue accent &amp; custom wallpaper">Home &amp; Games</button>
+        <button role="tab" class="tab rounded-lg text-xs sm:text-sm font-medium text-zinc-400 hover:text-zinc-200" data-shot="./screenshots/library.png" data-cap="All Clips Library — Filter by game or favorites, sort, search, and tag resolutions">Clip Library</button>
+        <button role="tab" class="tab rounded-lg text-xs sm:text-sm font-medium text-zinc-400 hover:text-zinc-200" data-shot="./screenshots/settings.png" data-cap="Capture &amp; Quality — NVENC / AMF / QuickSync, HEVC / AV1 / H.264, CQP, and GPU CAS Sharpening">Capture &amp; Quality</button>
+        <button role="tab" class="tab rounded-lg text-xs sm:text-sm font-medium text-zinc-400 hover:text-zinc-200" data-shot="./screenshots/audio.png" data-cap="Dual-Track Audio — Independent WASAPI loopback &amp; mic volumes plus separate audio tracks">Audio Tracks</button>
+        <button role="tab" class="tab rounded-lg text-xs sm:text-sm font-medium text-zinc-400 hover:text-zinc-200" data-shot="./screenshots/personalization.png" data-cap="Personalization — Custom wallpapers, blur/brightness, 5+ accent colors, and SteamGridDB icons">Personalization</button>
       </div>
-      <div class="shot-frame">
-        <img id="shot-img" src="./screenshots/home.png" alt="Rewind app screenshot" />
-        <div class="shot-caption">
+
+      <div class="rounded-xl border border-zinc-800 bg-zinc-900/70 overflow-hidden shadow-2xl shadow-black/70 text-left">
+        <img id="shot-img" src="./screenshots/home.png" alt="Rewind app screenshot" class="w-full h-auto block" />
+        <div class="px-4 py-3 border-t border-zinc-800/80 bg-zinc-950/70 flex flex-wrap justify-between items-center gap-2 text-xs text-zinc-400">
           <span id="shot-cap">Home &amp; Game Decks — Auto-organized by game with Blue accent &amp; custom wallpaper</span>
-          <span>100% Native Rust + egui</span>
+          <span id="release-note-link"><a href="https://github.com/BioBuch/Rewind/releases" target="_blank" rel="noopener" class="hover:text-zinc-200 transition">View Release Notes →</a></span>
         </div>
       </div>
     </section>
 
-    <section id="features">
-      <div class="section-head">
-        <div>
-          <span class="section-kicker">Everything Built In</span>
-          <h2 class="section-title">Designed to stay out of your way</h2>
-          <p class="section-sub">No Electron, no Overwolf, and no bundled 100 MB FFmpeg binary — just native Windows APIs and Rust.</p>
+    <!-- Features -->
+    <section id="features" class="py-14">
+      <div class="mb-7 reveal">
+        <h2 class="text-2xl sm:text-3xl font-bold tracking-tight">Everything built in, zero bloat</h2>
+        <p class="mt-1.5 text-sm sm:text-base text-zinc-400 max-w-2xl">No Electron, no Overwolf, and no bundled 100 MB FFmpeg binary — just native Windows APIs and Rust.</p>
+      </div>
+
+      <div class="text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-3">Capture &amp; Performance</div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+        <div class="card bg-zinc-900/60 border border-zinc-800/90 hover:border-zinc-700 transition">
+          <div class="card-body p-5 gap-2.5">
+            <div class="flex items-center justify-between">
+              <span class="w-8 h-8 rounded-lg bg-zinc-800/80 border border-zinc-700/60 flex items-center justify-center text-zinc-200">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>
+              </span>
+              <span class="badge badge-sm bg-zinc-800 border-zinc-700 text-zinc-300">SSD Friendly</span>
+            </div>
+            <h3 class="font-semibold text-zinc-100">Zero-Lag RAM Ring Buffer</h3>
+            <p class="text-sm text-zinc-400 leading-relaxed">Holds the last 15s to 5m in compressed RAM (64–768 MB budget) instead of wearing out your SSD with constant temp writes.</p>
+          </div>
+        </div>
+
+        <div class="card bg-zinc-900/60 border border-zinc-800/90 hover:border-zinc-700 transition">
+          <div class="card-body p-5 gap-2.5">
+            <div class="flex items-center justify-between">
+              <span class="w-8 h-8 rounded-lg bg-zinc-800/80 border border-zinc-700/60 flex items-center justify-center text-zinc-200">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              </span>
+              <span class="badge badge-sm bg-zinc-800 border-zinc-700 text-zinc-300">Any GPU</span>
+            </div>
+            <h3 class="font-semibold text-zinc-100">NVENC, AMF &amp; QuickSync</h3>
+            <p class="text-sm text-zinc-400 leading-relaxed">Hardware-encodes HEVC, AV1, or H.264 up to 4K 120fps in MP4 or MKV with CQP quality or CBR bitrate control.</p>
+          </div>
+        </div>
+
+        <div class="card bg-zinc-900/60 border border-zinc-800/90 hover:border-zinc-700 transition">
+          <div class="card-body p-5 gap-2.5">
+            <div class="flex items-center justify-between">
+              <span class="w-8 h-8 rounded-lg bg-zinc-800/80 border border-zinc-700/60 flex items-center justify-center text-zinc-200">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/></svg>
+              </span>
+              <span class="badge badge-sm bg-zinc-800 border-zinc-700 text-zinc-300">D3D11 Shader</span>
+            </div>
+            <h3 class="font-semibold text-zinc-100">GPU CAS Sharpening</h3>
+            <p class="text-sm text-zinc-400 leading-relaxed">Optional Contrast-Adaptive Sharpening compute shader (Light or Medium) sharpens frames on the GPU before encoding.</p>
+          </div>
+        </div>
+
+        <div class="card bg-zinc-900/60 border border-zinc-800/90 hover:border-zinc-700 transition">
+          <div class="card-body p-5 gap-2.5">
+            <div class="flex items-center justify-between">
+              <span class="w-8 h-8 rounded-lg bg-zinc-800/80 border border-zinc-700/60 flex items-center justify-center text-zinc-200">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              </span>
+              <span class="badge badge-sm bg-zinc-800 border-zinc-700 text-zinc-300">+5s to +15s</span>
+            </div>
+            <h3 class="font-semibold text-zinc-100">Post-Clip Reaction Buffer</h3>
+            <p class="text-sm text-zinc-400 leading-relaxed">Hit your save hotkey the moment a play happens and keep recording 5, 10, or 15 extra seconds so reactions stay in.</p>
+          </div>
+        </div>
+
+        <div class="card bg-zinc-900/60 border border-zinc-800/90 hover:border-zinc-700 transition">
+          <div class="card-body p-5 gap-2.5">
+            <div class="flex items-center justify-between">
+              <span class="w-8 h-8 rounded-lg bg-zinc-800/80 border border-zinc-700/60 flex items-center justify-center text-zinc-200">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              </span>
+              <span class="badge badge-sm bg-zinc-800 border-zinc-700 text-zinc-300">Hook-Free</span>
+            </div>
+            <h3 class="font-semibold text-zinc-100">Lightweight Game Detection</h3>
+            <p class="text-sm text-zinc-400 leading-relaxed">Detects games using foreground window titles and classes only — never opens game process handles or injects DLL overlays.</p>
+          </div>
+        </div>
+
+        <div class="card bg-zinc-900/60 border border-zinc-800/90 hover:border-zinc-700 transition">
+          <div class="card-body p-5 gap-2.5">
+            <div class="flex items-center justify-between">
+              <span class="w-8 h-8 rounded-lg bg-zinc-800/80 border border-zinc-700/60 flex items-center justify-center text-zinc-200">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+              </span>
+              <span class="badge badge-sm bg-zinc-800 border-zinc-700 text-zinc-300">Split Architecture</span>
+            </div>
+            <h3 class="font-semibold text-zinc-100">Ephemeral UI + Tiny Daemon</h3>
+            <p class="text-sm text-zinc-400 leading-relaxed">Close the window and the egui interface exits completely (0 MB UI RAM) while the lightweight tray daemon keeps capturing.</p>
+          </div>
         </div>
       </div>
 
-      <div class="group-label">Capture &amp; Performance</div>
-      <div class="grid">
-        <div class="card">
-          <span class="card-badge">SSD Friendly</span>
-          <h3>Zero-Lag RAM Ring Buffer</h3>
-          <p>Holds the last 15s to 5m in compressed RAM (64–768 MB budget) instead of hammering your SSD with constant temp writes.</p>
+      <div class="text-xs font-semibold uppercase tracking-wider text-zinc-500 mt-9 mb-3">Audio, Editing &amp; Library</div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+        <div class="card bg-zinc-900/60 border border-zinc-800/90 hover:border-zinc-700 transition">
+          <div class="card-body p-5 gap-2.5">
+            <div class="flex items-center justify-between">
+              <span class="w-8 h-8 rounded-lg bg-zinc-800/80 border border-zinc-700/60 flex items-center justify-center text-zinc-200">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
+              </span>
+              <span class="badge badge-sm bg-zinc-800 border-zinc-700 text-zinc-300">WASAPI</span>
+            </div>
+            <h3 class="font-semibold text-zinc-100">Synced Game &amp; Mic Tracks</h3>
+            <p class="text-sm text-zinc-400 leading-relaxed">Pick specific output and mic devices, adjust independent volumes, mute mic with <code class="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-200 text-xs">Ctrl+M</code>, or save separate audio tracks.</p>
+          </div>
         </div>
-        <div class="card">
-          <span class="card-badge">Any GPU</span>
-          <h3>NVENC, AMF &amp; QuickSync</h3>
-          <p>Hardware-encodes HEVC, AV1, or H.264 up to 4K 120fps in MP4 or MKV with CQP quality or CBR bitrate control.</p>
-        </div>
-        <div class="card">
-          <span class="card-badge">D3D11 Shader</span>
-          <h3>GPU CAS Sharpening</h3>
-          <p>Optional Contrast-Adaptive Sharpening compute shader (Light or Medium) sharpens textures on the GPU before encoding.</p>
-        </div>
-        <div class="card">
-          <span class="card-badge">Never Miss Reactions</span>
-          <h3>Post-Clip Buffer (+5s to +15s)</h3>
-          <p>Hit your save hotkey the moment a play happens and keep recording 5, 10, or 15 extra seconds so your squad's reactions stay in.</p>
-        </div>
-        <div class="card">
-          <span class="card-badge">Hook-Free</span>
-          <h3>Lightweight Game Detection</h3>
-          <p>Detects games using foreground window titles and classes only — never opens game process handles or injects DLL overlays.</p>
-        </div>
-        <div class="card">
-          <span class="card-badge">Split Architecture</span>
-          <h3>Ephemeral UI + Tiny Daemon</h3>
-          <p>Close the window and the egui interface exits completely (0 MB UI RAM) while the lightweight tray daemon keeps capturing.</p>
-        </div>
-      </div>
 
-      <div class="group-label">Audio, Editing &amp; Library</div>
-      <div class="grid">
-        <div class="card">
-          <span class="card-badge">WASAPI</span>
-          <h3>Synced Game &amp; Mic Tracks</h3>
-          <p>Pick specific output and mic devices, adjust independent volumes, mute mic with a hotkey (<code>Ctrl+M</code>), or save separate audio tracks.</p>
+        <div class="card bg-zinc-900/60 border border-zinc-800/90 hover:border-zinc-700 transition">
+          <div class="card-body p-5 gap-2.5">
+            <div class="flex items-center justify-between">
+              <span class="w-8 h-8 rounded-lg bg-zinc-800/80 border border-zinc-700/60 flex items-center justify-center text-zinc-200">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              </span>
+              <span class="badge badge-sm bg-zinc-800 border-zinc-700 text-zinc-300">1-Click Share</span>
+            </div>
+            <h3 class="font-semibold text-zinc-100">Discord &lt; 10 MB Compressor</h3>
+            <p class="text-sm text-zinc-400 leading-relaxed">Automatically calculates bitrate, resolution, and framerate to fit any clip or trimmed range strictly under Discord's 10 MB limit.</p>
+          </div>
         </div>
-        <div class="card">
-          <span class="card-badge">1-Click Share</span>
-          <h3>Discord &lt; 10 MB Compressor</h3>
-          <p>Automatically calculates bitrate, resolution, and framerate to fit any clip or trimmed range strictly under Discord's free 10 MB cap.</p>
+
+        <div class="card bg-zinc-900/60 border border-zinc-800/90 hover:border-zinc-700 transition">
+          <div class="card-body p-5 gap-2.5">
+            <div class="flex items-center justify-between">
+              <span class="w-8 h-8 rounded-lg bg-zinc-800/80 border border-zinc-700/60 flex items-center justify-center text-zinc-200">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/></svg>
+              </span>
+              <span class="badge badge-sm bg-zinc-800 border-zinc-700 text-zinc-300">Instant Remux</span>
+            </div>
+            <h3 class="font-semibold text-zinc-100">Lossless Trim &amp; 9:16 Vertical</h3>
+            <p class="text-sm text-zinc-400 leading-relaxed">Scrub frame-by-frame in the hardware-decoded player and export lossless IDR-keyframe MP4 trims (or 9:16 vertical) without stalling replay.</p>
+          </div>
         </div>
-        <div class="card">
-          <span class="card-badge">Instant Remux</span>
-          <h3>Lossless Trim &amp; 9:16 Vertical</h3>
-          <p>Scrub frame-by-frame in the hardware-decoded player and export lossless IDR-keyframe MP4 trims (or 9:16 vertical) without stalling replay.</p>
+
+        <div class="card bg-zinc-900/60 border border-zinc-800/90 hover:border-zinc-700 transition">
+          <div class="card-body p-5 gap-2.5">
+            <div class="flex items-center justify-between">
+              <span class="w-8 h-8 rounded-lg bg-zinc-800/80 border border-zinc-700/60 flex items-center justify-center text-zinc-200">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+              </span>
+              <span class="badge badge-sm bg-zinc-800 border-zinc-700 text-zinc-300">SQLite</span>
+            </div>
+            <h3 class="font-semibold text-zinc-100">Per-Game Library &amp; Undo</h3>
+            <p class="text-sm text-zinc-400 leading-relaxed">Auto thumbnails, per-game folders, search, favorites, collections, an 8-second Undo Delete, and auto-cleanup at your storage cap.</p>
+          </div>
         </div>
-        <div class="card">
-          <span class="card-badge">SQLite Manager</span>
-          <h3>Per-Game Library &amp; Undo</h3>
-          <p>Auto thumbnails, per-game folders, search, favorites, collections, an 8-second Undo Delete, and auto-cleanup when hitting your storage cap.</p>
+
+        <div class="card bg-zinc-900/60 border border-zinc-800/90 hover:border-zinc-700 transition">
+          <div class="card-body p-5 gap-2.5">
+            <div class="flex items-center justify-between">
+              <span class="w-8 h-8 rounded-lg bg-zinc-800/80 border border-zinc-700/60 flex items-center justify-center text-zinc-200">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/><circle cx="6.5" cy="12.5" r=".5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>
+              </span>
+              <span class="badge badge-sm bg-zinc-800 border-zinc-700 text-zinc-300">Personalize</span>
+            </div>
+            <h3 class="font-semibold text-zinc-100">Custom Theme &amp; SteamGridDB</h3>
+            <p class="text-sm text-zinc-400 leading-relaxed">Add a custom wallpaper with blur/brightness and auto-extracted accent colors, plus automatic game icons pulled via SteamGridDB.</p>
+          </div>
         </div>
-        <div class="card">
-          <span class="card-badge">Personalize</span>
-          <h3>Custom Theme &amp; SteamGridDB</h3>
-          <p>Add a custom wallpaper with blur/brightness and auto-extracted accent colors, plus automatic game icons pulled via SteamGridDB.</p>
-        </div>
-        <div class="card">
-          <span class="card-badge">Quality of Life</span>
-          <h3>Discord RPC &amp; 1-Click Updates</h3>
-          <p>Shows live status via Discord Rich Presence, installs via a single self-contained EXE, and updates straight from GitHub Releases.</p>
+
+        <div class="card bg-zinc-900/60 border border-zinc-800/90 hover:border-zinc-700 transition">
+          <div class="card-body p-5 gap-2.5">
+            <div class="flex items-center justify-between">
+              <span class="w-8 h-8 rounded-lg bg-zinc-800/80 border border-zinc-700/60 flex items-center justify-center text-zinc-200">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+              </span>
+              <span class="badge badge-sm bg-zinc-800 border-zinc-700 text-zinc-300">Quality of Life</span>
+            </div>
+            <h3 class="font-semibold text-zinc-100">Discord RPC &amp; 1-Click Updates</h3>
+            <p class="text-sm text-zinc-400 leading-relaxed">Shows live status via Discord Rich Presence, installs via a single self-contained EXE, and updates straight from GitHub Releases.</p>
+          </div>
         </div>
       </div>
     </section>
 
-    <section id="memory">
-      <div class="section-head">
-        <div>
-          <span class="section-kicker">Memory Footprint</span>
-          <h2 class="section-title">Built to leave your RAM for your games</h2>
-          <p class="section-sub">Rewind's split daemon + ephemeral UI stays around ~64 MB while capturing, and drops UI memory to 0 MB when closed.</p>
-        </div>
+    <!-- Memory Footprint -->
+    <section id="memory" class="py-12 reveal">
+      <div class="mb-6 reveal">
+        <h2 class="text-2xl sm:text-3xl font-bold tracking-tight">Memory Footprint</h2>
+        <p class="mt-1.5 text-sm sm:text-base text-zinc-400 max-w-2xl">Rewind's split daemon + ephemeral UI stays around ~64 MB while capturing, and drops UI memory to 0 MB when closed.</p>
       </div>
-      <div class="ram-card">
-        <div class="ram-row">
-          <div class="ram-name">Rewind (UI closed)<small>Measured • Tray daemon active</small></div>
-          <div class="ram-track"><div class="ram-fill rewind" style="width: 6.5%;"></div></div>
-          <div class="ram-val rewind">~64 MB</div>
-        </div>
-        <div class="ram-row">
-          <div class="ram-name">NVIDIA ShadowPlay / App<small>Reported idle background</small></div>
-          <div class="ram-track"><div class="ram-fill" style="width: 28%;"></div></div>
-          <div class="ram-val">150 – 350 MB</div>
-        </div>
-        <div class="ram-row">
-          <div class="ram-name">Overwolf / Outplayed<small>Reported idle (500–1,000+ MB active)</small></div>
-          <div class="ram-track"><div class="ram-fill" style="width: 45%;"></div></div>
-          <div class="ram-val">200 – 500 MB</div>
-        </div>
-        <div class="ram-row">
-          <div class="ram-name">Medal.tv (Electron)<small>Reported idle (700–1,000 MB active)</small></div>
-          <div class="ram-track"><div class="ram-fill" style="width: 58%;"></div></div>
-          <div class="ram-val">300 – 600 MB</div>
-        </div>
-        <div class="ram-row">
-          <div class="ram-name">SteelSeries GG / Moments<small>Reported idle (600–1,200 MB active)</small></div>
-          <div class="ram-track"><div class="ram-fill" style="width: 62%;"></div></div>
-          <div class="ram-val">300 – 600 MB</div>
-        </div>
-        <div class="ram-row">
-          <div class="ram-name">OBS Studio<small>Reported idle with scenes / buffer</small></div>
-          <div class="ram-track"><div class="ram-fill" style="width: 85%;"></div></div>
-          <div class="ram-val">400 – 1,000+ MB</div>
-        </div>
-        <div class="ram-note">
-          Rewind measured on Windows 11 x64 during active 1080p 60fps HEVC desktop capture (UI = 0 MB when closed). Competitor figures reflect typical user-reported idle/background ranges and vary by buffer length, resolution, and plugins.
+
+      <div class="card bg-zinc-900/60 border border-zinc-800/90">
+        <div class="card-body p-5 sm:p-6 gap-4">
+          <div class="ram-row grid grid-cols-1 sm:grid-cols-[230px_1fr_135px] items-center gap-2 sm:gap-4 text-sm">
+            <div>
+              <div class="flex items-center gap-2 font-semibold text-zinc-100">
+                <img src="./icon.png" alt="Rewind" class="w-4 h-4 rounded" />
+                <span>Rewind (UI closed)</span>
+              </div>
+              <div class="text-xs text-zinc-500 mt-0.5">Measured • Tray daemon active</div>
+            </div>
+            <div class="w-full h-2.5 rounded-full bg-zinc-800 overflow-hidden">
+              <div class="h-full rounded-full bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.55)]" style="width: 6.5%;"></div>
+            </div>
+            <div class="sm:text-right font-semibold text-emerald-400 tabular-nums">~64 MB</div>
+          </div>
+
+          <div class="ram-row grid grid-cols-1 sm:grid-cols-[230px_1fr_135px] items-center gap-2 sm:gap-4 text-sm">
+            <div>
+              <div class="font-medium text-zinc-200">NVIDIA ShadowPlay</div>
+              <div class="text-xs text-zinc-500 mt-0.5">Reported idle background</div>
+            </div>
+            <div class="w-full h-2.5 rounded-full bg-zinc-800 overflow-hidden">
+              <div class="h-full rounded-full bg-zinc-500" style="width: 25%;"></div>
+            </div>
+            <div class="sm:text-right text-zinc-400 tabular-nums">150 – 350 MB</div>
+          </div>
+
+          <div class="ram-row grid grid-cols-1 sm:grid-cols-[230px_1fr_135px] items-center gap-2 sm:gap-4 text-sm">
+            <div>
+              <div class="font-medium text-zinc-200">Overwolf / Outplayed</div>
+              <div class="text-xs text-zinc-500 mt-0.5">Reported idle (500–1,000+ MB active)</div>
+            </div>
+            <div class="w-full h-2.5 rounded-full bg-zinc-800 overflow-hidden">
+              <div class="h-full rounded-full bg-zinc-500" style="width: 35%;"></div>
+            </div>
+            <div class="sm:text-right text-zinc-400 tabular-nums">200 – 500 MB</div>
+          </div>
+
+          <div class="ram-row grid grid-cols-1 sm:grid-cols-[230px_1fr_135px] items-center gap-2 sm:gap-4 text-sm">
+            <div>
+              <div class="font-medium text-zinc-200">AMD Adrenalin / ReLive</div>
+              <div class="text-xs text-zinc-500 mt-0.5">Reported with Instant Replay active</div>
+            </div>
+            <div class="w-full h-2.5 rounded-full bg-zinc-800 overflow-hidden">
+              <div class="h-full rounded-full bg-zinc-500" style="width: 40%;"></div>
+            </div>
+            <div class="sm:text-right text-zinc-400 tabular-nums">300 – 500 MB</div>
+          </div>
+
+          <div class="ram-row grid grid-cols-1 sm:grid-cols-[230px_1fr_135px] items-center gap-2 sm:gap-4 text-sm">
+            <div>
+              <div class="font-medium text-zinc-200">Medal.tv (Electron)</div>
+              <div class="text-xs text-zinc-500 mt-0.5">Reported idle (700–1,000 MB active)</div>
+            </div>
+            <div class="w-full h-2.5 rounded-full bg-zinc-800 overflow-hidden">
+              <div class="h-full rounded-full bg-zinc-500" style="width: 45%;"></div>
+            </div>
+            <div class="sm:text-right text-zinc-400 tabular-nums">300 – 600 MB</div>
+          </div>
+
+          <div class="ram-row grid grid-cols-1 sm:grid-cols-[230px_1fr_135px] items-center gap-2 sm:gap-4 text-sm">
+            <div>
+              <div class="font-medium text-zinc-200">SteelSeries GG / Moments</div>
+              <div class="text-xs text-zinc-500 mt-0.5">Reported idle (600–1,200 MB active)</div>
+            </div>
+            <div class="w-full h-2.5 rounded-full bg-zinc-800 overflow-hidden">
+              <div class="h-full rounded-full bg-zinc-500" style="width: 45%;"></div>
+            </div>
+            <div class="sm:text-right text-zinc-400 tabular-nums">300 – 600 MB</div>
+          </div>
+
+          <div class="ram-row grid grid-cols-1 sm:grid-cols-[230px_1fr_135px] items-center gap-2 sm:gap-4 text-sm">
+            <div>
+              <div class="font-medium text-zinc-200">OBS Studio</div>
+              <div class="text-xs text-zinc-500 mt-0.5">Reported idle with scenes / buffer</div>
+            </div>
+            <div class="w-full h-2.5 rounded-full bg-zinc-800 overflow-hidden">
+              <div class="h-full rounded-full bg-zinc-500" style="width: 70%;"></div>
+            </div>
+            <div class="sm:text-right text-zinc-400 tabular-nums">400 – 1,000+ MB</div>
+          </div>
+
+          <div class="pt-3 border-t border-zinc-800/80 text-xs text-zinc-500">
+            Rewind measured on Windows 11 x64 during active 1080p 60fps HEVC desktop capture (UI = 0 MB when closed). Competitor figures reflect typical user-reported idle/background ranges and vary by buffer length, resolution, and plugins.
+          </div>
         </div>
       </div>
     </section>
 
-    <section id="compare">
-      <div class="section-head">
-        <div>
-          <span class="section-kicker">Comparison</span>
-          <h2 class="section-title">How Rewind stacks up</h2>
-          <p class="section-sub">Built to combine ShadowPlay's simplicity, Medal's clip library, and OBS's openness without the bloat.</p>
-        </div>
+    <!-- Comparison Table -->
+    <section id="compare" class="py-12 reveal">
+      <div class="mb-6 reveal">
+        <h2 class="text-2xl sm:text-3xl font-bold tracking-tight">How Rewind stacks up</h2>
+        <p class="mt-1.5 text-sm sm:text-base text-zinc-400 max-w-2xl">ShadowPlay's simplicity, Medal's clip library, and OBS's openness — without the bloat.</p>
       </div>
-      <div class="table-wrap">
-        <table>
+
+      <div class="card bg-zinc-900/60 border border-zinc-800/90 overflow-x-auto">
+        <table class="table text-sm">
           <thead>
-            <tr>
-              <th>Feature</th>
-              <th>Rewind</th>
-              <th>Medal / Outplayed</th>
-              <th>ShadowPlay / ReLive</th>
-              <th>OBS Studio</th>
+            <tr class="border-b border-zinc-800 bg-zinc-900/90 text-zinc-300">
+              <th class="font-medium">Feature</th>
+              <th class="font-semibold">
+                <span class="inline-flex items-center gap-2 text-zinc-100">
+                  <img src="./icon.png" alt="Rewind" class="w-4 h-4 rounded" />
+                  <span>Rewind</span>
+                </span>
+              </th>
+              <th class="font-medium">Medal / Outplayed</th>
+              <th class="font-medium">ShadowPlay / ReLive</th>
+              <th class="font-medium">OBS Studio</th>
             </tr>
           </thead>
-          <tbody>
-            <tr>
-              <td>100% Local, Free &amp; Open Source</td>
-              <td>Yes (GPL-3.0)</td>
-              <td>Ads / Paywalls</td>
-              <td>Proprietary</td>
-              <td>Yes (GPL-2.0)</td>
+          <tbody class="divide-y divide-zinc-800/80">
+            <tr class="hover:bg-zinc-800/25 border-zinc-800/80">
+              <td class="font-medium text-zinc-200">100% Local, Free &amp; Open Source</td>
+              <td class="text-emerald-400 font-medium">Yes (GPL-3.0)</td>
+              <td class="text-zinc-400">Ads / Paywalls</td>
+              <td class="text-zinc-400">Proprietary</td>
+              <td class="text-emerald-400 font-medium">Yes (GPL-2.0)</td>
             </tr>
-            <tr>
-              <td>Works on NVIDIA, AMD &amp; Intel</td>
-              <td>Yes</td>
-              <td>Yes</td>
-              <td>Vendor-locked</td>
-              <td>Yes</td>
+            <tr class="hover:bg-zinc-800/25 border-zinc-800/80">
+              <td class="font-medium text-zinc-200">Works on NVIDIA, AMD &amp; Intel</td>
+              <td class="text-emerald-400 font-medium">Yes</td>
+              <td class="text-emerald-400 font-medium">Yes</td>
+              <td class="text-zinc-400">Vendor-locked</td>
+              <td class="text-emerald-400 font-medium">Yes</td>
             </tr>
-            <tr>
-              <td>No Electron / Overwolf Bloat</td>
-              <td>Native Rust</td>
-              <td>Electron / Overwolf</td>
-              <td>Native</td>
-              <td>Native</td>
+            <tr class="hover:bg-zinc-800/25 border-zinc-800/80">
+              <td class="font-medium text-zinc-200">RAM Ring Buffer (SSD-friendly)</td>
+              <td class="text-emerald-400 font-medium">Yes (64–768 MB)</td>
+              <td class="text-zinc-400">Disk writes</td>
+              <td class="text-zinc-400">Disk writes</td>
+              <td class="text-emerald-400 font-medium">Yes</td>
             </tr>
-            <tr>
-              <td>RAM Ring Buffer (SSD-friendly)</td>
-              <td>Yes (64–768 MB)</td>
-              <td>Disk writes</td>
-              <td>Disk writes</td>
-              <td>Yes</td>
+            <tr class="hover:bg-zinc-800/25 border-zinc-800/80">
+              <td class="font-medium text-zinc-200">No Electron / Overwolf Bloat</td>
+              <td class="text-emerald-400 font-medium">Native Rust</td>
+              <td class="text-zinc-400">Electron / Overwolf</td>
+              <td class="text-emerald-400 font-medium">Native</td>
+              <td class="text-emerald-400 font-medium">Native</td>
             </tr>
-            <tr>
-              <td>1-Click Discord &lt; 10 MB Export</td>
-              <td>Built-in</td>
-              <td>Paid / Cloud links</td>
-              <td>No</td>
-              <td>No</td>
+            <tr class="hover:bg-zinc-800/25 border-zinc-800/80">
+              <td class="font-medium text-zinc-200">Zero DLL / Overlay Injection</td>
+              <td class="text-emerald-400 font-medium">Window-only detection</td>
+              <td class="text-zinc-400">Injects hooks</td>
+              <td class="text-zinc-400">Overlay hooks</td>
+              <td class="text-zinc-400">Game Capture hooks</td>
             </tr>
-            <tr>
-              <td>Clip Library &amp; Lossless Quick Trim</td>
-              <td>Built-in</td>
-              <td>Built-in</td>
-              <td>Basic</td>
-              <td>No</td>
+            <tr class="hover:bg-zinc-800/25 border-zinc-800/80">
+              <td class="font-medium text-zinc-200">Clip Library &amp; Lossless Quick Trim</td>
+              <td class="text-emerald-400 font-medium">Built-in</td>
+              <td class="text-emerald-400 font-medium">Built-in</td>
+              <td class="text-zinc-400">Basic</td>
+              <td class="text-zinc-400">No</td>
             </tr>
-            <tr>
-              <td>Zero DLL / Overlay Injection</td>
-              <td>Window-only detection</td>
-              <td>Injects hooks</td>
-              <td>Overlay hooks</td>
-              <td>Game Capture hooks</td>
+            <tr class="hover:bg-zinc-800/25 border-zinc-800/80">
+              <td class="font-medium text-zinc-200">1-Click Discord &lt; 10 MB Export</td>
+              <td class="text-emerald-400 font-medium">Built-in</td>
+              <td class="text-zinc-400">Paid / Cloud links</td>
+              <td class="text-zinc-400">No</td>
+              <td class="text-zinc-400">No</td>
             </tr>
           </tbody>
         </table>
       </div>
     </section>
 
-    <section>
-      <div class="notice-box">
-        <div><strong>SmartScreen Note:</strong> Release binaries are not yet code-signed, so Windows SmartScreen may show an unknown-publisher prompt on first run. Starring the repository on GitHub helps qualify Rewind for free OSS code signing via SignPath.</div>
-        <div><strong>Disclaimer:</strong> Rewind only captures the desktop display using standard Windows APIs and never reads game memory, injects DLLs, or hooks DirectX. However, third-party kernel anti-cheats operate at their own discretion — use at your own risk; Rewind and its contributors are not responsible for any game or account bans.</div>
-        <div><strong>AI Assistance:</strong> AI coding tools were used during development. All AI-assisted code and changes are reviewed and verified by a human (<a href="https://github.com/BioBuch" target="_blank" rel="noopener" style="color:#8ab4ff;">BioBuch</a>) before being added.</div>
+    <!-- Notices -->
+    <section class="py-6 pb-14 reveal">
+      <div class="grid gap-3">
+        <div role="alert" class="alert bg-zinc-900/60 border border-zinc-800/90 text-zinc-400 text-sm">
+          <span><strong class="text-zinc-100">SmartScreen Note:</strong> Release binaries are not yet code-signed, so Windows SmartScreen may show an unknown-publisher prompt on first run. Starring the repository on GitHub helps qualify Rewind for free OSS code signing via SignPath.</span>
+        </div>
+        <div role="alert" class="alert bg-zinc-900/60 border border-zinc-800/90 text-zinc-400 text-sm">
+          <span><strong class="text-zinc-100">Disclaimer:</strong> Rewind only captures the desktop display using standard Windows APIs and never reads game memory, injects DLLs, or hooks DirectX. However, third-party kernel anti-cheats operate at their own discretion — use at your own risk; Rewind and its contributors are not responsible for any game or account bans.</span>
+        </div>
+        <div role="alert" class="alert bg-zinc-900/60 border border-zinc-800/90 text-zinc-400 text-sm">
+          <span><strong class="text-zinc-100">AI Assistance:</strong> AI coding tools were used during development. All AI-assisted code and changes are reviewed and verified by a human (<a href="https://github.com/BioBuch" target="_blank" rel="noopener" class="link text-zinc-200">BioBuch</a>) before being added.</span>
+        </div>
       </div>
     </section>
   </main>
 
-  <footer class="wrap">
-    <span>Rewind — GPL-3.0 Open Source</span>
-    <div style="display:flex; gap:16px;">
-      <a href="https://github.com/BioBuch/Rewind" target="_blank" rel="noopener">GitHub</a>
-      <a href="https://github.com/BioBuch/Rewind/releases" target="_blank" rel="noopener">Releases</a>
-      <a href="https://github.com/BioBuch/Rewind/issues" target="_blank" rel="noopener">Issues</a>
-      <a href="https://ko-fi.com/rewindapp" target="_blank" rel="noopener">Ko-fi</a>
+  <footer class="border-t border-zinc-800/80 py-8">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 flex flex-wrap items-center justify-between gap-4 text-xs text-zinc-500">
+      <span>Rewind — GPL-3.0 Open Source</span>
+      <div class="flex items-center gap-5">
+        <a href="https://github.com/BioBuch/Rewind" target="_blank" rel="noopener" class="hover:text-zinc-200 transition">GitHub</a>
+        <a href="https://github.com/BioBuch/Rewind/releases" target="_blank" rel="noopener" class="hover:text-zinc-200 transition">Releases</a>
+        <a href="https://github.com/BioBuch/Rewind/issues" target="_blank" rel="noopener" class="hover:text-zinc-200 transition">Issues</a>
+        <a href="https://ko-fi.com/rewindapp" target="_blank" rel="noopener" class="hover:text-zinc-200 transition">Ko-fi</a>
+      </div>
     </div>
   </footer>
 
   <script>
-    document.querySelectorAll(".tab-btn").forEach((btn) => {
+    const revealTargets = document.querySelectorAll(".reveal, .card, .ram-row, .alert");
+    revealTargets.forEach((el) => {
+      el.classList.add("reveal");
+      if (el.parentElement && el.parentElement.classList.contains("grid")) {
+        const idx = Array.from(el.parentElement.children).indexOf(el);
+        el.style.transitionDelay = `${(idx % 3) * 70}ms`;
+      } else if (el.classList.contains("ram-row")) {
+        const idx = Array.from(el.parentElement.children).indexOf(el);
+        el.style.transitionDelay = `${idx * 55}ms`;
+      }
+    });
+
+    if ("IntersectionObserver" in window) {
+      const io = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) {
+              entry.target.classList.add("is-visible");
+              io.unobserve(entry.target);
+            }
+          });
+        },
+        { threshold: 0.08, rootMargin: "0px 0px -30px 0px" }
+      );
+      revealTargets.forEach((el) => io.observe(el));
+    } else {
+      revealTargets.forEach((el) => el.classList.add("is-visible"));
+    }
+
+    document.querySelectorAll('[role="tab"]').forEach((btn) => {
       btn.addEventListener("click", () => {
-        document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
-        btn.classList.add("active");
+        document.querySelectorAll('[role="tab"]').forEach((b) => {
+          b.classList.remove("tab-active", "text-zinc-100", "bg-zinc-950");
+          b.classList.add("text-zinc-400");
+        });
+        btn.classList.add("tab-active", "text-zinc-100", "bg-zinc-950");
+        btn.classList.remove("text-zinc-400");
         const img = document.getElementById("shot-img");
         const cap = document.getElementById("shot-cap");
         if (img && btn.dataset.shot) img.src = btn.dataset.shot;
@@ -878,7 +591,7 @@
         }
         const notes = document.getElementById("release-note-link");
         if (notes && rel.html_url) {
-          notes.innerHTML = `<a href="${rel.html_url}" target="_blank" rel="noopener">${rel.tag_name} Release Notes →</a>`;
+          notes.innerHTML = `<a href="${rel.html_url}" target="_blank" rel="noopener" class="hover:text-zinc-200 transition">${rel.tag_name} Release Notes →</a>`;
         }
       })
       .catch(() => {});

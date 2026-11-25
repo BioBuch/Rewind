@@ -34,8 +34,9 @@ Unlike Electron or Overwolf-based clippers, Rewind splits into a tiny native Rus
 
 ```text
 Rewind (Measured, UI closed)   ███                  ~64 MB
-NVIDIA ShadowPlay / App        ███████████          150 – 350 MB
+NVIDIA ShadowPlay              ███████████          150 – 350 MB
 Overwolf / Outplayed           ███████████████      200 – 500 MB  (500–1,000+ MB active)
+AMD Adrenalin / ReLive         ████████████████     300 – 500 MB  (Instant Replay active)
 Medal.tv (Electron)            ██████████████████   300 – 600 MB  (700–1,000 MB active)
 SteelSeries GG / Moments       ██████████████████   300 – 600 MB  (600–1,200 MB active)
 OBS Studio                     ████████████████████ 400 – 1,000+ MB

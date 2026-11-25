@@ -66,6 +66,10 @@ Rewind only captures the desktop display using standard Windows APIs (`WGC` / `D
 
 All product names, logos, and brands are property of their respective owners.
 
+## AI Assistance
+
+AI coding tools were used to assist with development. All AI-assisted code and changes are reviewed and verified by a human ([BioBuch](https://github.com/BioBuch)) before being added to the repository.
+
 ## Support & License
 
 - Support Rewind on [Ko-fi](https://ko-fi.com/rewindapp).

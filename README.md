@@ -21,7 +21,7 @@ Rewind captures your gameplay in the background using a rolling RAM buffer and s
 - **Zero-lag Instant Replay** — Keeps your recent gameplay in RAM via DXGI Desktop Duplication and hardware encoding (`NVENC`, `AMF`, `QuickSync`) up to `4K 120fps`.
 - **Synced Game & Mic Audio** — Captures system loopback and microphone in lockstep so audio stays aligned with video.
 - **Built-in Clip Editor & Discord Export** — Scrub frame-by-frame, trim losslessly, or compress clips up to `60s` straight under `10 MB` for Discord.
-- **Anti-Cheat Safe Game Detection** — Matches foreground window titles and classes only; never opens game process handles or injects hooks.
+- **Lightweight Game Detection** — Matches foreground window titles and classes only; never opens game process handles or injects hooks.
 - **Clean Native UI** — Lightweight Rust + `egui` interface that closes completely when you are done and leaves only the tray daemon running.
 
 ## Install

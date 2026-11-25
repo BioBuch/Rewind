@@ -16,6 +16,33 @@
 
 Rewind captures your gameplay in the background using a rolling RAM buffer and saves crisp, synchronized MP4 clips on a single keypress — without cloud accounts, telemetry, or heavy overlays.
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/home.png" alt="Rewind Home & Game Decks" width="49%" />
+  <img src="docs/screenshots/library.png" alt="Rewind Clip Library" width="49%" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/settings.png" alt="Rewind Capture & Quality Settings" width="32%" />
+  <img src="docs/screenshots/audio.png" alt="Rewind Dual-Track Audio Settings" width="32%" />
+  <img src="docs/screenshots/personalization.png" alt="Rewind Personalization & Themes" width="32%" />
+</p>
+
+## Memory Footprint
+
+Unlike Electron or Overwolf-based clippers, Rewind splits into a tiny native Rust tray daemon and an ephemeral `egui` UI that exits completely (`0 MB` UI RAM) when closed:
+
+```text
+Rewind (Measured, UI closed)   ███                  ~64 MB
+NVIDIA ShadowPlay / App        ███████████          150 – 350 MB
+Overwolf / Outplayed           ███████████████      200 – 500 MB  (500–1,000+ MB active)
+Medal.tv (Electron)            ██████████████████   300 – 600 MB  (700–1,000 MB active)
+SteelSeries GG / Moments       ██████████████████   300 – 600 MB  (600–1,200 MB active)
+OBS Studio                     ████████████████████ 400 – 1,000+ MB
+```
+
+<sub>Rewind measured on Windows 11 x64 (`64.4 MB` daemon RAM during active `1080p 60fps HEVC` desktop capture; UI = `0 MB` when closed). Competitor figures reflect typical user-reported idle/background ranges and vary with buffer settings and plugins.</sub>
+
 ## Features
 
 ### Capture & Performance

@@ -281,6 +281,114 @@
     .stat-label { font-size: 12px; color: var(--dim); margin-bottom: 4px; }
     .stat-val { font-size: 15px; font-weight: 600; color: var(--text); }
 
+    .showcase-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 8px;
+      margin: 26px 0 14px;
+    }
+
+    .tab-btn {
+      padding: 8px 14px;
+      border-radius: 8px;
+      background: var(--elevated);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 550;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .tab-btn:hover { color: var(--text); border-color: var(--border-strong); }
+    .tab-btn.active {
+      background: var(--accent-soft);
+      border-color: rgba(76, 141, 255, 0.5);
+      color: #ffffff;
+    }
+
+    .shot-frame {
+      background: var(--surface);
+      border: 1px solid var(--border-strong);
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 28px 80px rgba(0, 0, 0, 0.65);
+    }
+
+    .shot-frame img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    .shot-caption {
+      padding: 12px 18px;
+      border-top: 1px solid var(--border);
+      background: var(--surface-2);
+      font-size: 13px;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .ram-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 22px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .ram-row {
+      display: grid;
+      grid-template-columns: 210px 1fr 140px;
+      align-items: center;
+      gap: 14px;
+      font-size: 13.5px;
+    }
+
+    .ram-name { font-weight: 600; color: var(--text); }
+    .ram-name small { display: block; font-weight: 400; font-size: 11.5px; color: var(--dim); }
+
+    .ram-track {
+      height: 14px;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 999px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .ram-fill {
+      height: 100%;
+      border-radius: 999px;
+      background: rgba(147, 158, 178, 0.42);
+    }
+
+    .ram-fill.rewind {
+      background: linear-gradient(90deg, var(--green), var(--accent));
+      box-shadow: 0 0 16px rgba(52, 211, 153, 0.4);
+    }
+
+    .ram-val {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .ram-val.rewind { color: var(--green); font-weight: 650; }
+
+    .ram-note {
+      font-size: 12px;
+      color: var(--dim);
+      padding-top: 6px;
+      border-top: 1px solid var(--border);
+    }
+
     section { padding: 48px 0; }
 
     .section-head {
@@ -432,8 +540,10 @@
       .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
 
-    @media (max-width: 640px) {
+      @media (max-width: 640px) {
       .grid, .mockup-stats { grid-template-columns: 1fr; }
+      .ram-row { grid-template-columns: 1fr; gap: 6px; }
+      .ram-val { text-align: left; }
       .hero { padding: 52px 0 34px; }
       .nav-links .hide-sm { display: none; }
     }
@@ -447,7 +557,9 @@
         <span>Rewind</span>
       </a>
       <nav class="nav-links">
+        <a class="btn-ghost" href="#preview">Preview</a>
         <a class="btn-ghost" href="#features">Features</a>
+        <a class="btn-ghost hide-sm" href="#memory">RAM</a>
         <a class="btn-ghost hide-sm" href="#compare">Compare</a>
         <a class="btn-ghost" href="https://github.com/BioBuch/Rewind" target="_blank" rel="noopener">GitHub</a>
         <a class="btn-ghost" href="https://ko-fi.com/rewindapp" target="_blank" rel="noopener">Ko-fi</a>
@@ -503,6 +615,23 @@
             <div class="stat-label">Discord Export</div>
             <div class="stat-val">1-Click &lt; 10 MB</div>
           </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="preview" style="padding-top: 10px;">
+      <div class="showcase-tabs" role="tablist" aria-label="Rewind UI views">
+        <button class="tab-btn active" data-shot="./screenshots/home.png" data-cap="Home &amp; Game Decks — Auto-organized by game with Blue accent &amp; custom wallpaper">Home &amp; Games</button>
+        <button class="tab-btn" data-shot="./screenshots/library.png" data-cap="All Clips Library — Filter by game or favorites, sort, search, and tag resolutions">Clip Library</button>
+        <button class="tab-btn" data-shot="./screenshots/settings.png" data-cap="Capture &amp; Quality — NVENC / AMF / QuickSync, HEVC / AV1 / H.264, CQP, and GPU CAS Sharpening">Capture &amp; Quality</button>
+        <button class="tab-btn" data-shot="./screenshots/audio.png" data-cap="Dual-Track Audio — Independent WASAPI loopback &amp; mic volumes plus separate audio tracks">Audio Tracks</button>
+        <button class="tab-btn" data-shot="./screenshots/personalization.png" data-cap="Personalization — Custom wallpapers, blur/brightness, 5+ accent colors, and SteamGridDB icons">Personalization</button>
+      </div>
+      <div class="shot-frame">
+        <img id="shot-img" src="./screenshots/home.png" alt="Rewind app screenshot" />
+        <div class="shot-caption">
+          <span id="shot-cap">Home &amp; Game Decks — Auto-organized by game with Blue accent &amp; custom wallpaper</span>
+          <span>100% Native Rust + egui</span>
         </div>
       </div>
     </section>
@@ -581,6 +710,51 @@
           <span class="card-badge">Quality of Life</span>
           <h3>Discord RPC &amp; 1-Click Updates</h3>
           <p>Shows live status via Discord Rich Presence, installs via a single self-contained EXE, and updates straight from GitHub Releases.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="memory">
+      <div class="section-head">
+        <div>
+          <span class="section-kicker">Memory Footprint</span>
+          <h2 class="section-title">Built to leave your RAM for your games</h2>
+          <p class="section-sub">Rewind's split daemon + ephemeral UI stays around ~64 MB while capturing, and drops UI memory to 0 MB when closed.</p>
+        </div>
+      </div>
+      <div class="ram-card">
+        <div class="ram-row">
+          <div class="ram-name">Rewind (UI closed)<small>Measured • Tray daemon active</small></div>
+          <div class="ram-track"><div class="ram-fill rewind" style="width: 6.5%;"></div></div>
+          <div class="ram-val rewind">~64 MB</div>
+        </div>
+        <div class="ram-row">
+          <div class="ram-name">NVIDIA ShadowPlay / App<small>Reported idle background</small></div>
+          <div class="ram-track"><div class="ram-fill" style="width: 28%;"></div></div>
+          <div class="ram-val">150 – 350 MB</div>
+        </div>
+        <div class="ram-row">
+          <div class="ram-name">Overwolf / Outplayed<small>Reported idle (500–1,000+ MB active)</small></div>
+          <div class="ram-track"><div class="ram-fill" style="width: 45%;"></div></div>
+          <div class="ram-val">200 – 500 MB</div>
+        </div>
+        <div class="ram-row">
+          <div class="ram-name">Medal.tv (Electron)<small>Reported idle (700–1,000 MB active)</small></div>
+          <div class="ram-track"><div class="ram-fill" style="width: 58%;"></div></div>
+          <div class="ram-val">300 – 600 MB</div>
+        </div>
+        <div class="ram-row">
+          <div class="ram-name">SteelSeries GG / Moments<small>Reported idle (600–1,200 MB active)</small></div>
+          <div class="ram-track"><div class="ram-fill" style="width: 62%;"></div></div>
+          <div class="ram-val">300 – 600 MB</div>
+        </div>
+        <div class="ram-row">
+          <div class="ram-name">OBS Studio<small>Reported idle with scenes / buffer</small></div>
+          <div class="ram-track"><div class="ram-fill" style="width: 85%;"></div></div>
+          <div class="ram-val">400 – 1,000+ MB</div>
+        </div>
+        <div class="ram-note">
+          Rewind measured on Windows 11 x64 during active 1080p 60fps HEVC desktop capture (UI = 0 MB when closed). Competitor figures reflect typical user-reported idle/background ranges and vary by buffer length, resolution, and plugins.
         </div>
       </div>
     </section>
@@ -679,6 +853,17 @@
   </footer>
 
   <script>
+    document.querySelectorAll(".tab-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        const img = document.getElementById("shot-img");
+        const cap = document.getElementById("shot-cap");
+        if (img && btn.dataset.shot) img.src = btn.dataset.shot;
+        if (cap && btn.dataset.cap) cap.textContent = btn.dataset.cap;
+      });
+    });
+
     fetch("https://api.github.com/repos/BioBuch/Rewind/releases/latest")
       .then((r) => (r.ok ? r.json() : null))
       .then((rel) => {

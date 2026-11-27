@@ -7,6 +7,7 @@
 **A fast, local-only clipping software for Windows 11.**
 
 [![Release](https://img.shields.io/github/v/release/BioBuch/Rewind?label=latest)](https://github.com/BioBuch/Rewind/releases)
+[![Discord](https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white)](https://discord.gg/HfXe7dwFXV)
 [![Ko-fi](https://img.shields.io/badge/Support-Ko--fi-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/rewindapp)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 

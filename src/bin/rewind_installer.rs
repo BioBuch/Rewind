@@ -11,7 +11,7 @@ use egui::{
     Align, Color32, CursorIcon, FontId, Id, Layout, Margin, Pos2, Rect, Rounding, Sense, Stroke,
     Ui, Vec2, ViewportCommand, Visuals,
 };
-use rewind::win_ffi::apply_win11_rounded_corners_to_active_window;
+use rewind::win_ffi::{apply_win11_rounded_corners_to_active_window, pick_install_folder_dialog};
 
 const PAYLOAD_REWIND_UI: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/payload_rewind.exe"));
 const PAYLOAD_REWIND_DAEMON: &[u8] =
@@ -37,6 +37,7 @@ enum SetupPhase {
 
 struct InstallerApp {
     install_dir: String,
+    portable: bool,
     phase: SetupPhase,
     corners_applied: bool,
     opened_at: Option<f64>,
@@ -53,6 +54,7 @@ impl InstallerApp {
             .into_owned();
         Self {
             install_dir: default_dir,
+            portable: false,
             phase: SetupPhase::Ready,
             corners_applied: false,
             opened_at: None,
@@ -61,12 +63,13 @@ impl InstallerApp {
 
     fn start_install(&mut self) {
         let dir = self.install_dir.clone();
+        let portable = self.portable;
         let progress = Arc::new(AtomicU32::new(10));
         let result = Arc::new(Mutex::new(None));
         let p_bg = Arc::clone(&progress);
         let r_bg = Arc::clone(&result);
         std::thread::spawn(move || {
-            let res = perform_install(&dir, &p_bg);
+            let res = perform_install(&dir, portable, &p_bg);
             if let Ok(mut guard) = r_bg.lock() {
                 *guard = Some(res);
             }
@@ -75,8 +78,16 @@ impl InstallerApp {
     }
 }
 
-fn perform_install(install_dir: &str, progress: &AtomicU32) -> Result<String, String> {
-    let target = PathBuf::from(install_dir.trim());
+fn perform_install(
+    install_dir: &str,
+    portable: bool,
+    progress: &AtomicU32,
+) -> Result<String, String> {
+    let trimmed = install_dir.trim();
+    if trimmed.is_empty() {
+        return Err("Please choose an install folder".to_owned());
+    }
+    let target = PathBuf::from(trimmed);
     fs::create_dir_all(&target).map_err(|e| format!("Failed to create folder: {e}"))?;
     progress.store(22, Ordering::Release);
 
@@ -100,47 +111,56 @@ fn perform_install(install_dir: &str, progress: &AtomicU32) -> Result<String, St
     let ico_path = target.join("rewind.ico");
     let _ = fs::write(&ico_path, rewind::app_icon::default_ico_bytes());
 
-    if let Ok(profile) = std::env::var("USERPROFILE") {
-        let lnk = PathBuf::from(profile).join("Desktop").join("Rewind.lnk");
-        create_shortcut(&ui_exe, &lnk, &target, &ico_path);
-    }
-
-    if let Ok(appdata) = std::env::var("APPDATA") {
-        let prog_dir = PathBuf::from(appdata)
-            .join("Microsoft")
-            .join("Windows")
-            .join("Start Menu")
-            .join("Programs")
-            .join("Rewind");
-        let _ = fs::create_dir_all(&prog_dir);
-        let lnk = prog_dir.join("Rewind.lnk");
-        create_shortcut(&ui_exe, &lnk, &target, &ico_path);
-    }
-    progress.store(90, Ordering::Release);
-
-    let uninstaller = target.join("Rewind-Uninstall.exe");
-    if let Ok(me) = std::env::current_exe() {
-        let _ = fs::copy(me, &uninstaller);
-    }
+    let flag_path = target.join("portable.flag");
     let dir_str = target.to_string_lossy().into_owned();
-    reg_add(UNINSTALL_KEY, "DisplayName", "Rewind");
-    reg_add(UNINSTALL_KEY, "DisplayVersion", env!("CARGO_PKG_VERSION"));
-    reg_add(UNINSTALL_KEY, "Publisher", "BioBuch");
-    reg_add(UNINSTALL_KEY, "InstallLocation", &dir_str);
-    reg_add(UNINSTALL_KEY, "DisplayIcon", &ico_path.to_string_lossy());
-    reg_add(
-        UNINSTALL_KEY,
-        "UninstallString",
-        &format!("\"{}\" --uninstall", uninstaller.to_string_lossy()),
-    );
-    reg_add(
-        UNINSTALL_KEY,
-        "QuietUninstallString",
-        &format!("\"{}\" --uninstall --quiet", uninstaller.to_string_lossy()),
-    );
-    reg_add_dword(UNINSTALL_KEY, "NoModify", 1);
-    reg_add_dword(UNINSTALL_KEY, "NoRepair", 1);
-    progress.store(96, Ordering::Release);
+    if portable {
+        fs::write(&flag_path, b"portable\n")
+            .map_err(|e| format!("Failed to write portable.flag: {e}"))?;
+        let _ = fs::create_dir_all(target.join("data"));
+        progress.store(96, Ordering::Release);
+    } else {
+        let _ = fs::remove_file(&flag_path);
+        if let Ok(profile) = std::env::var("USERPROFILE") {
+            let lnk = PathBuf::from(profile).join("Desktop").join("Rewind.lnk");
+            create_shortcut(&ui_exe, &lnk, &target, &ico_path);
+        }
+
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            let prog_dir = PathBuf::from(appdata)
+                .join("Microsoft")
+                .join("Windows")
+                .join("Start Menu")
+                .join("Programs")
+                .join("Rewind");
+            let _ = fs::create_dir_all(&prog_dir);
+            let lnk = prog_dir.join("Rewind.lnk");
+            create_shortcut(&ui_exe, &lnk, &target, &ico_path);
+        }
+        progress.store(90, Ordering::Release);
+
+        let uninstaller = target.join("Rewind-Uninstall.exe");
+        if let Ok(me) = std::env::current_exe() {
+            let _ = fs::copy(me, &uninstaller);
+        }
+        reg_add(UNINSTALL_KEY, "DisplayName", "Rewind");
+        reg_add(UNINSTALL_KEY, "DisplayVersion", env!("CARGO_PKG_VERSION"));
+        reg_add(UNINSTALL_KEY, "Publisher", "BioBuch");
+        reg_add(UNINSTALL_KEY, "InstallLocation", &dir_str);
+        reg_add(UNINSTALL_KEY, "DisplayIcon", &ico_path.to_string_lossy());
+        reg_add(
+            UNINSTALL_KEY,
+            "UninstallString",
+            &format!("\"{}\" --uninstall", uninstaller.to_string_lossy()),
+        );
+        reg_add(
+            UNINSTALL_KEY,
+            "QuietUninstallString",
+            &format!("\"{}\" --uninstall --quiet", uninstaller.to_string_lossy()),
+        );
+        reg_add_dword(UNINSTALL_KEY, "NoModify", 1);
+        reg_add_dword(UNINSTALL_KEY, "NoRepair", 1);
+        progress.store(96, Ordering::Release);
+    }
 
     let _ = Command::new(&daemon_exe).current_dir(&target).spawn();
     let _ = Command::new(&ui_exe).current_dir(&target).spawn();
@@ -342,11 +362,94 @@ impl eframe::App for InstallerApp {
                                 .size(13.5)
                                 .color(Color32::from_rgba_unmultiplied(148, 163, 184, alpha)),
                         );
-                        ui.add_space(34.0);
+                        ui.add_space(20.0);
 
                         match &self.phase {
                             SetupPhase::Ready => {
-                                if pill_button(ui, "Install", true, Vec2::new(176.0, 40.0)) {
+                                egui::Frame::none()
+                                    .fill(Color32::from_rgb(16, 20, 30))
+                                    .stroke(Stroke::new(1.0_f32, BORDER_COL))
+                                    .rounding(Rounding::same(10.0))
+                                    .inner_margin(Margin::symmetric(12.0, 10.0))
+                                    .show(ui, |ui| {
+                                        ui.set_width(430.0);
+                                        ui.horizontal(|ui| {
+                                            ui.add(
+                                                egui::TextEdit::singleline(&mut self.install_dir)
+                                                    .desired_width(332.0)
+                                                    .frame(false)
+                                                    .font(FontId::proportional(12.0)),
+                                            );
+                                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                                if pill_button(ui, "Browse", false, Vec2::new(76.0, 28.0)) {
+                                                    if let Some(chosen) = pick_install_folder_dialog() {
+                                                        let p = PathBuf::from(&chosen);
+                                                        self.install_dir = if p.file_name().and_then(|n| n.to_str()).map(|n| n.eq_ignore_ascii_case("Rewind")).unwrap_or(false) {
+                                                            chosen
+                                                        } else {
+                                                            p.join("Rewind").to_string_lossy().into_owned()
+                                                        };
+                                                    }
+                                                }
+                                            });
+                                        });
+                                    });
+
+                                ui.add_space(10.0);
+                                let mode_t = ctx.animate_bool_with_time(
+                                    Id::new("inst_mode_t"),
+                                    self.portable,
+                                    0.24,
+                                );
+                                let row_w = 142.0 + 8.0 + 108.0;
+                                let row_rect = Rect::from_center_size(
+                                    Pos2::new(
+                                        ui.available_rect_before_wrap().center().x,
+                                        ui.cursor().top() + 15.0,
+                                    ),
+                                    Vec2::new(row_w, 30.0),
+                                );
+                                let _ = ui.allocate_exact_size(Vec2::new(row_w, 30.0), Sense::hover());
+                                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(row_rect), |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 8.0;
+                                        if pill_button_t(
+                                            ui,
+                                            "Standard Install",
+                                            1.0 - mode_t,
+                                            1.0,
+                                            Vec2::new(142.0, 30.0),
+                                        ) {
+                                            self.portable = false;
+                                        }
+                                        if pill_button_t(
+                                            ui,
+                                            "Portable",
+                                            mode_t,
+                                            1.0,
+                                            Vec2::new(108.0, 30.0),
+                                        ) {
+                                            self.portable = true;
+                                        }
+                                    });
+                                });
+                                ui.add_space(6.0);
+                                let text_fade = (mode_t * 2.0 - 1.0).abs();
+                                let show_portable_copy = mode_t >= 0.5;
+                                let mode_hint = if show_portable_copy {
+                                    "Self-contained folder (data/ + portable.flag), no shortcuts or registry"
+                                } else {
+                                    "Creates Start Menu & Desktop shortcuts + Add/Remove Programs entry"
+                                };
+                                ui.label(
+                                    egui::RichText::new(mode_hint)
+                                        .size(11.0)
+                                        .color(TEXT_MUTED.linear_multiply(text_fade)),
+                                );
+
+                                ui.add_space(16.0);
+                                let btn_lbl = if show_portable_copy { "Extract Portable" } else { "Install" };
+                                if pill_button_t(ui, btn_lbl, 1.0, text_fade, Vec2::new(186.0, 40.0)) {
                                     self.start_install();
                                 }
                             }
@@ -413,37 +516,31 @@ impl eframe::App for InstallerApp {
 }
 
 fn pill_button(ui: &mut Ui, label: &str, primary: bool, size: Vec2) -> bool {
+    pill_button_t(ui, label, if primary { 1.0 } else { 0.0 }, 1.0, size)
+}
+
+fn pill_button_t(ui: &mut Ui, label: &str, active_t: f32, text_alpha: f32, size: Vec2) -> bool {
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let hover_t = ui.ctx().animate_bool_with_time(
         Id::new(("inst_pill_h", label)),
         resp.hovered(),
         0.14,
     );
-    let base_fill = if primary {
-        ACCENT
-    } else {
-        Color32::from_rgb(23, 29, 40)
-    };
-    let hov_fill = if primary {
-        Color32::from_rgb(98, 211, 253)
-    } else {
-        Color32::from_rgb(34, 42, 58)
-    };
-    let fill = base_fill.lerp_to_gamma(hov_fill, hover_t);
-    let fg = if primary {
-        Color32::from_rgb(10, 14, 20)
-    } else {
-        TEXT_PRIMARY
-    };
+    let inactive_fill = Color32::from_rgb(23, 29, 40).lerp_to_gamma(Color32::from_rgb(34, 42, 58), hover_t);
+    let active_fill = ACCENT.lerp_to_gamma(Color32::from_rgb(98, 211, 253), hover_t);
+    let fill = inactive_fill.lerp_to_gamma(active_fill, active_t);
+    let fg = TEXT_PRIMARY
+        .lerp_to_gamma(Color32::from_rgb(10, 14, 20), active_t)
+        .linear_multiply(text_alpha);
     let expand = if resp.is_pointer_button_down_on() { -1.0 } else { hover_t * 1.0 };
     let draw_rect = rect.expand(expand);
     ui.painter()
         .rect_filled(draw_rect, Rounding::same(size.y * 0.5), fill);
-    if !primary {
+    if active_t < 0.99 {
         ui.painter().rect_stroke(
             draw_rect,
             Rounding::same(size.y * 0.5),
-            Stroke::new(1.0_f32, BORDER_COL),
+            Stroke::new(1.0_f32, BORDER_COL.linear_multiply(1.0 - active_t)),
         );
     }
     ui.painter().text(
@@ -549,7 +646,7 @@ fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Rewind")
-            .with_inner_size([540.0, 395.0])
+            .with_inner_size([540.0, 480.0])
             .with_resizable(false)
             .with_decorations(false)
             .with_icon(std::sync::Arc::new(egui::IconData {

@@ -360,6 +360,10 @@ pub fn pick_folder_dialog(_initial_dir: &str) -> Option<String> {
     pick_path_dialog(true, "Select Rewind Clips Folder", false)
 }
 
+pub fn pick_install_folder_dialog() -> Option<String> {
+    pick_path_dialog(true, "Select Rewind Install Folder", false)
+}
+
 pub fn pick_image_file_dialog() -> Option<String> {
     pick_path_dialog(false, "Select Background Image (PNG / JPG)", false)
 }

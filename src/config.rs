@@ -459,7 +459,21 @@ fn normalize_loaded_config(mut cfg: AppConfig) -> AppConfig {
 }
 
 impl AppConfig {
+    pub fn is_portable() -> bool {
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("portable.flag").exists()))
+            .unwrap_or(false)
+    }
+
     pub fn app_data_dir() -> PathBuf {
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                if dir.join("portable.flag").exists() {
+                    return dir.join("data");
+                }
+            }
+        }
         if let Some(appdata) = std::env::var_os("APPDATA") {
             PathBuf::from(appdata).join("Rewind")
         } else {

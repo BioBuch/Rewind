@@ -56,6 +56,7 @@ impl DiscordRpcClient {
     pub fn set_activity(
         &mut self,
         client_id: &str,
+        name: &str,
         details: &str,
         state: &str,
         start_unix: i64,
@@ -67,6 +68,7 @@ impl DiscordRpcClient {
         let payload = build_set_activity_json(
             std::process::id(),
             self.req_seq,
+            name,
             details,
             state,
             start_unix,
@@ -110,45 +112,50 @@ pub fn build_activity_strings(
     _resolution_label: &str,
     _fps: u32,
 ) -> (String, String) {
-    let details = match (active_game, replay_on) {
-        (Some(game), _) => format!("Clipping {game}"),
-        (None, true) => "Idle · Ready to Clip".to_owned(),
-        (None, false) => "Idle · Ready to Clip".to_owned(),
-    };
-    let state = if replay_on {
-        "with Rewind".to_owned()
+    let replay_lbl = if replay_on {
+        "Replay On".to_owned()
     } else {
-        "with Rewind · Paused".to_owned()
+        "Replay Paused".to_owned()
     };
-    (details, state)
+    match active_game {
+        Some("Desktop") => ("Idle on Desktop".to_owned(), replay_lbl),
+        Some(_) => (replay_lbl, String::new()),
+        None => ("Idle · Ready to Clip".to_owned(), replay_lbl),
+    }
 }
 
 pub fn build_set_activity_json(
     pid: u32,
     req_id: u64,
+    name: &str,
     details: &str,
     state: &str,
     start_unix: i64,
 ) -> String {
+    let mut activity = json!({
+        "name": name,
+        "details": details,
+        "status_display_type": 0,
+        "timestamps": { "start": start_unix },
+        "assets": {
+            "large_image": "rewind_logo",
+            "large_text": "Rewind — A clipping software"
+        },
+        "buttons": [
+            {
+                "label": "Download Rewind",
+                "url": "https://github.com/BioBuch/Rewind/releases/latest"
+            }
+        ]
+    });
+    if !state.is_empty() {
+        activity["state"] = Value::String(state.to_owned());
+    }
     json!({
         "cmd": "SET_ACTIVITY",
         "args": {
             "pid": pid,
-            "activity": {
-                "details": details,
-                "state": state,
-                "timestamps": { "start": start_unix },
-                "assets": {
-                    "large_image": "rewind_logo",
-                    "large_text": "Rewind — A clipping software"
-                },
-                "buttons": [
-                    {
-                        "label": "Download Rewind",
-                        "url": "https://github.com/BioBuch/Rewind/releases/latest"
-                    }
-                ]
-            }
+            "activity": activity
         },
         "nonce": format!("rewind-{req_id}")
     })
@@ -190,18 +197,16 @@ mod tests {
     #[test]
     fn encodes_discord_ipc_frame_and_activity_payload() {
         let (details, state) = build_activity_strings(Some("Fortnite"), true, "1080p", 120);
-        assert_eq!(details, "Clipping Fortnite");
-        assert_eq!(state, "with Rewind");
-        assert_eq!(
-            build_activity_strings(Some("Desktop"), true, "1080p", 120).0,
-            "Clipping Desktop"
-        );
-        assert_eq!(
-            build_activity_strings(None, true, "1080p", 120).0,
-            "Idle · Ready to Clip"
-        );
+        assert_eq!(details, "Replay On");
+        assert_eq!(state, "");
+        let (d_desk, s_desk) = build_activity_strings(Some("Desktop"), false, "1080p", 120);
+        assert_eq!(d_desk, "Idle on Desktop");
+        assert_eq!(s_desk, "Replay Paused");
+        let (d_idle, s_idle) = build_activity_strings(None, true, "1080p", 120);
+        assert_eq!(d_idle, "Idle · Ready to Clip");
+        assert_eq!(s_idle, "Replay On");
 
-        let json_str = build_set_activity_json(1234, 7, &details, &state, 1_700_000_000);
+        let json_str = build_set_activity_json(1234, 7, "Fortnite With Rewind", &details, &state, 1_700_000_000);
         let frame = encode_ipc_frame(1, json_str.as_bytes());
         assert_eq!(u32::from_le_bytes([frame[0], frame[1], frame[2], frame[3]]), 1);
         assert_eq!(
@@ -210,7 +215,10 @@ mod tests {
         );
         let parsed: Value = serde_json::from_slice(&frame[8..]).expect("valid json");
         assert_eq!(parsed["cmd"], "SET_ACTIVITY");
-        assert_eq!(parsed["args"]["activity"]["details"], "Clipping Fortnite");
+        assert_eq!(parsed["args"]["activity"]["name"], "Fortnite With Rewind");
+        assert_eq!(parsed["args"]["activity"]["details"], "Replay On");
+        assert!(parsed["args"]["activity"]["state"].is_null());
+        assert_eq!(parsed["args"]["activity"]["status_display_type"], 0);
         assert_eq!(
             parsed["args"]["activity"]["buttons"][0]["label"],
             "Download Rewind"

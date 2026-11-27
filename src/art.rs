@@ -528,3 +528,105 @@ pub fn paint_rounded_image(
     }
     painter.add(mesh);
 }
+
+pub fn paint_fluent_background_reveal(
+    ctx: &egui::Context,
+    accent_color: Color32,
+    bg_tex: Option<&TextureHandle>,
+    ambient_tint: Option<Color32>,
+    brightness_pct: u32,
+    reveal: Option<(Pos2, f32, Color32, Option<&TextureHandle>, u32)>,
+) {
+    let Some((origin, radius, old_accent, old_tex, old_bright)) = reveal else {
+        paint_fluent_background(ctx, accent_color, bg_tex, ambient_tint, brightness_pct);
+        return;
+    };
+
+    let rect = ctx.screen_rect();
+    let painter = ctx.layer_painter(egui::LayerId::background()).with_clip_rect(rect);
+    let segs = 64usize;
+    let r = radius.max(1.0);
+
+    let same_tex = match (old_tex, bg_tex) {
+        (Some(a), Some(b)) => a.id() == b.id(),
+        (None, None) => true,
+        _ => false,
+    };
+
+    if same_tex && old_bright == brightness_pct && bg_tex.is_some() {
+        paint_fluent_background(ctx, accent_color, bg_tex, ambient_tint, brightness_pct);
+    } else {
+        paint_fluent_background(ctx, old_accent, old_tex, None, old_bright);
+        if let Some(tex) = bg_tex {
+            let [tw, th] = tex.size();
+            let tex_ar = (tw.max(1) as f32) / (th.max(1) as f32);
+            let win_ar = (rect.width().max(1.0)) / (rect.height().max(1.0));
+            let uv_rect = if tex_ar > win_ar {
+                let half = (win_ar / tex_ar) * 0.5;
+                Rect::from_min_max(Pos2::new(0.5 - half, 0.0), Pos2::new(0.5 + half, 1.0))
+            } else {
+                let half = (tex_ar / win_ar) * 0.5;
+                Rect::from_min_max(Pos2::new(0.0, 0.5 - half), Pos2::new(1.0, 0.5 + half))
+            };
+            let b = ((brightness_pct.clamp(5, 100) as f32 / 100.0) * 255.0)
+                .round()
+                .clamp(12.0, 255.0) as u8;
+            let b_lit = ((b as f32) * (1.0 - 42.0 / 255.0)).round().clamp(10.0, 255.0) as u8;
+            let tint = Color32::from_rgb(b_lit, b_lit, b_lit);
+            let to_uv = |p: Pos2| {
+                let nx = (p.x - rect.left()) / rect.width().max(1.0);
+                let ny = (p.y - rect.top()) / rect.height().max(1.0);
+                Pos2::new(
+                    uv_rect.left() + nx * uv_rect.width(),
+                    uv_rect.top() + ny * uv_rect.height(),
+                )
+            };
+            let mut mesh = Mesh::with_texture(tex.id());
+            mesh.vertices.push(egui::epaint::Vertex {
+                pos: origin,
+                uv: to_uv(origin),
+                color: tint,
+            });
+            for i in 0..=segs {
+                let ang = (i as f32 / segs as f32) * TAU;
+                let p = Pos2::new(origin.x + ang.cos() * r, origin.y + ang.sin() * r);
+                mesh.vertices.push(egui::epaint::Vertex {
+                    pos: p,
+                    uv: to_uv(p),
+                    color: tint,
+                });
+            }
+            for i in 1..=segs {
+                mesh.add_triangle(0, i as u32, (i + 1) as u32);
+            }
+            painter.add(mesh);
+        } else {
+            let base = Color32::from_rgb(11, 14, 20);
+            let fill = Color32::from_rgb(
+                (base.r() as u16 + (accent_color.r() as u16 / 10)) as u8,
+                (base.g() as u16 + (accent_color.g() as u16 / 10)) as u8,
+                (base.b() as u16 + (accent_color.b() as u16 / 9)) as u8,
+            );
+            let mut mesh = Mesh::default();
+            mesh.colored_vertex(origin, fill);
+            for i in 0..=segs {
+                let ang = (i as f32 / segs as f32) * TAU;
+                let p = Pos2::new(origin.x + ang.cos() * r, origin.y + ang.sin() * r);
+                mesh.colored_vertex(p, fill);
+            }
+            for i in 1..=segs {
+                mesh.add_triangle(0, i as u32, (i + 1) as u32);
+            }
+            painter.add(mesh);
+        }
+    }
+
+    painter.circle_stroke(
+        origin,
+        r,
+        Stroke::new(
+            2.0_f32,
+            Color32::from_rgba_unmultiplied(accent_color.r(), accent_color.g(), accent_color.b(), 125),
+        ),
+    );
+}

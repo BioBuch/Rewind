@@ -1211,7 +1211,8 @@ fn main() {
 
 fn run_discord_rpc_loop(core: Arc<Mutex<DaemonCore>>, stop: Arc<AtomicBool>) {
     let mut client = DiscordRpcClient::new();
-    let start_unix = unix_now_secs();
+    let mut start_unix = unix_now_secs();
+    let mut current_source: Option<String> = None;
     let mut last_key: Option<(bool, String, Option<String>, bool, String, u32)> = None;
 
     while !stop.load(Ordering::Acquire) {
@@ -1243,12 +1244,20 @@ fn run_discord_rpc_loop(core: Arc<Mutex<DaemonCore>>, stop: Arc<AtomicBool>) {
                     last_key = None;
                 }
             } else {
+                if game != current_source {
+                    current_source = game.clone();
+                    start_unix = unix_now_secs();
+                }
                 let key = (enabled, app_id.clone(), game.clone(), replay_on, res_lbl.clone(), fps);
                 let need_send = !client.is_connected_to(&app_id) || last_key.as_ref() != Some(&key);
                 if need_send {
+                    let name = match game.as_deref() {
+                        Some("Desktop") | None => "Rewind".to_owned(),
+                        Some(g) => format!("{g} With Rewind"),
+                    };
                     let (details, state) =
                         build_activity_strings(game.as_deref(), replay_on, &res_lbl, fps);
-                    if client.set_activity(&app_id, &details, &state, start_unix) {
+                    if client.set_activity(&app_id, &name, &details, &state, start_unix) {
                         last_key = Some(key);
                     } else {
                         last_key = None;

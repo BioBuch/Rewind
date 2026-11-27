@@ -149,8 +149,12 @@ pub fn send_request_on_pipe(pipe_name: &str, req: &IpcRequest) -> Result<IpcResp
 }
 
 pub fn ensure_daemon_running() -> bool {
-    if send_request(&IpcRequest::GetSnapshot).is_ok() {
-        return true;
+    ensure_daemon_running_with_snapshot().0
+}
+
+pub fn ensure_daemon_running_with_snapshot() -> (bool, Option<DaemonSnapshot>) {
+    if let Ok(resp) = send_request(&IpcRequest::GetSnapshot) {
+        return (true, resp.snapshot);
     }
 
     if let Ok(cur_exe) = std::env::current_exe() {
@@ -162,11 +166,11 @@ pub fn ensure_daemon_running() -> bool {
 
     for _ in 0..25 {
         thread::sleep(Duration::from_millis(80));
-        if send_request(&IpcRequest::GetSnapshot).is_ok() {
-            return true;
+        if let Ok(resp) = send_request(&IpcRequest::GetSnapshot) {
+            return (true, resp.snapshot);
         }
     }
-    false
+    (false, None)
 }
 
 pub fn run_pipe_server<F>(pipe_name: &str, stop_flag: &std::sync::atomic::AtomicBool, handler: F)

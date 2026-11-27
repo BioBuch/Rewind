@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use windows::core::{GUID, PCWSTR};
@@ -162,8 +162,29 @@ pub fn encode_for_discord(
     duration_hint_secs: f32,
     progress_pct: &Arc<AtomicU32>,
 ) -> Result<(PathBuf, u64), String> {
+    encode_for_discord_cancellable(
+        src_path,
+        out_path,
+        trim_range,
+        duration_hint_secs,
+        progress_pct,
+        &AtomicBool::new(false),
+    )
+}
+
+pub fn encode_for_discord_cancellable(
+    src_path: &Path,
+    out_path: &Path,
+    trim_range: Option<(f32, f32)>,
+    duration_hint_secs: f32,
+    progress_pct: &Arc<AtomicU32>,
+    cancel: &AtomicBool,
+) -> Result<(PathBuf, u64), String> {
     if !src_path.exists() {
         return Err("Source clip file does not exist".to_owned());
+    }
+    if cancel.load(Ordering::Acquire) {
+        return Err("Cancelled".to_owned());
     }
     if let Some(parent) = out_path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("create export dir: {e}"))?;
@@ -188,7 +209,9 @@ pub fn encode_for_discord(
         DISCORD_TARGET_BYTES,
     );
 
-    let tmp_path = out_path.with_extension("discord.tmp.mp4");
+    static TMP_SEQ: AtomicU64 = AtomicU64::new(1);
+    let tmp_seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp_path = out_path.with_extension(format!("discord.{tmp_seq}.tmp.mp4"));
     run_with_fallbacks(
         src_path,
         &tmp_path,
@@ -199,7 +222,13 @@ pub fn encode_for_discord(
         progress_pct,
         0,
         95,
+        cancel,
     )?;
+
+    if cancel.load(Ordering::Acquire) {
+        let _ = fs::remove_file(&tmp_path);
+        return Err("Cancelled".to_owned());
+    }
 
     let mut actual_size = fs::metadata(&tmp_path)
         .map_err(|e| format!("read output size: {e}"))?
@@ -225,12 +254,17 @@ pub fn encode_for_discord(
             progress_pct,
             50,
             99,
+            cancel,
         )?;
         actual_size = fs::metadata(&tmp_path)
             .map_err(|e| format!("read retry output size: {e}"))?
             .len();
     }
 
+    if cancel.load(Ordering::Acquire) {
+        let _ = fs::remove_file(&tmp_path);
+        return Err("Cancelled".to_owned());
+    }
     if out_path.exists() {
         let _ = fs::remove_file(out_path);
     }
@@ -352,6 +386,7 @@ fn run_with_fallbacks(
     progress_pct: &Arc<AtomicU32>,
     pct_min: u32,
     pct_max: u32,
+    cancel: &AtomicBool,
 ) -> Result<(), String> {
     let attempts: &[(bool, bool)] = if plan.prefer_hevc {
         &[(true, true), (true, false), (false, true), (false, false)]
@@ -361,6 +396,9 @@ fn run_with_fallbacks(
     let mut last_err = String::from("Transcode failed");
     for &(use_hevc, use_hw) in attempts {
         let _ = fs::remove_file(tmp_path);
+        if cancel.load(Ordering::Acquire) {
+            return Err("Cancelled".to_owned());
+        }
         match transcode_pass(
             src_path,
             tmp_path,
@@ -373,9 +411,16 @@ fn run_with_fallbacks(
             progress_pct,
             pct_min,
             pct_max,
+            cancel,
         ) {
             Ok(()) => return Ok(()),
-            Err(e) => last_err = e,
+            Err(e) => {
+                if cancel.load(Ordering::Acquire) {
+                    let _ = fs::remove_file(tmp_path);
+                    return Err("Cancelled".to_owned());
+                }
+                last_err = e;
+            }
         }
     }
     Err(last_err)
@@ -393,6 +438,7 @@ fn transcode_pass(
     progress_pct: &Arc<AtomicU32>,
     pct_min: u32,
     pct_max: u32,
+    cancel: &AtomicBool,
 ) -> Result<(), String> {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
@@ -663,6 +709,9 @@ fn transcode_pass(
             let mut last_pct = pct_min;
 
             while !(vid_done && aud_done) {
+                if cancel.load(Ordering::Acquire) {
+                    return Err("Cancelled".to_owned());
+                }
                 let mut actual_stream = 0_u32;
                 let mut flags = 0_u32;
                 let mut ts_100ns = 0_i64;

@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicU32;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
@@ -12,7 +12,9 @@ use rewind::app_icon::{export_ico_to_install_dir, render_icon_rgba};
 use rewind::capture::HardwareInfo;
 use rewind::config::AppConfig;
 use rewind::game_icons::{cache_path_for_game, fetch_and_cache_game_icon, is_fetchable_game};
-use rewind::ipc::{ensure_daemon_running, send_request, DaemonSnapshot, IpcRequest, IpcResponse};
+use rewind::ipc::{
+    ensure_daemon_running_with_snapshot, send_request, DaemonSnapshot, IpcRequest, IpcResponse,
+};
 use rewind::library::ClipRecord;
 use rewind::player::VideoDecoder;
 use rewind::updater::{check_latest_release, download_and_launch_installer, ReleaseInfo};
@@ -71,6 +73,7 @@ pub enum ActivePopup {
     Profile,
     SortMenu,
     SettingsClipLength,
+    SettingsPostClipTail,
     SettingsResolution,
     SettingsFps,
     SettingsCodec,
@@ -142,6 +145,16 @@ impl SettingsCategory {
     }
 }
 
+#[derive(Clone)]
+pub struct ThemeReveal {
+    pub origin: egui::Pos2,
+    pub started_at: f64,
+    pub duration_secs: f32,
+    pub old_accent: Color32,
+    pub old_bg_texture: Option<TextureHandle>,
+    pub old_brightness: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpdateStatus {
     Idle,
@@ -210,6 +223,7 @@ pub struct RewindUiState {
     pub bg_cache_key: Option<(String, u32)>,
     pub bg_texture: Option<TextureHandle>,
     pub bg_ambient_tint: Option<Color32>,
+    pub theme_reveal: Option<ThemeReveal>,
     pub app_icon_color: Option<Color32>,
     pub app_icon_win_color: Option<Color32>,
     pub app_icon_texture: Option<TextureHandle>,
@@ -232,6 +246,7 @@ pub struct RewindUiState {
     update_rx: Option<Receiver<Result<Option<ReleaseInfo>, String>>>,
     install_rx: Option<Receiver<Result<(), String>>>,
     pub discord_encode_progress: Option<Arc<AtomicU32>>,
+    pub discord_encode_cancel: Option<Arc<AtomicBool>>,
     discord_encode_rx: Option<Receiver<Result<(PathBuf, u64), String>>>,
     pub onboarding_step: usize,
     pub tour_step: Option<usize>,
@@ -244,16 +259,8 @@ pub struct RewindUiState {
 
 impl RewindUiState {
     pub fn connect_and_init() -> Self {
-        let connected = ensure_daemon_running();
-        let initial_resp = if connected {
-            send_request(&IpcRequest::GetSnapshot).ok()
-        } else {
-            None
-        };
-
-        let snapshot = initial_resp
-            .and_then(|r| r.snapshot)
-            .unwrap_or_else(empty_snapshot);
+        let (connected, initial_snap) = ensure_daemon_running_with_snapshot();
+        let snapshot = initial_snap.unwrap_or_else(empty_snapshot);
         let last_seen_flash_counter = snapshot.clip_flash_counter;
         let last_seen_auto_close_counter = snapshot.auto_close_ui_counter;
 
@@ -326,6 +333,7 @@ impl RewindUiState {
             bg_cache_key: None,
             bg_texture: None,
             bg_ambient_tint: None,
+            theme_reveal: None,
             app_icon_color: None,
             app_icon_win_color: None,
             app_icon_texture: None,
@@ -347,6 +355,7 @@ impl RewindUiState {
             update_rx: None,
             install_rx: None,
             discord_encode_progress: None,
+            discord_encode_cancel: None,
             discord_encode_rx: None,
             onboarding_step: 0,
             tour_step: None,
@@ -462,6 +471,7 @@ impl RewindUiState {
         }
 
         while let Ok(res) = self.ipc_rx.try_recv() {
+            ctx.request_repaint();
             match res {
                 Ok(resp) => {
                     self.daemon_connected = true;
@@ -502,6 +512,9 @@ impl RewindUiState {
             }
         }
 
+        if !self.daemon_connected {
+            ctx.request_repaint_after(std::time::Duration::from_millis(120));
+        }
         if self.restarting_from_pid.is_some() && (now_secs - self.daemon_restart_started_at) > 8.0 {
             self.restarting_from_pid = None;
         }
@@ -559,6 +572,7 @@ impl RewindUiState {
             if let Ok(res) = rx.try_recv() {
                 self.discord_encode_rx = None;
                 self.discord_encode_progress = None;
+                self.discord_encode_cancel = None;
                 match res {
                     Ok((path, bytes)) => {
                         let copied =
@@ -574,8 +588,12 @@ impl RewindUiState {
                         self.status_banner = Some((msg, now_secs + 2.5));
                     }
                     Err(e) => {
-                        self.status_banner =
-                            Some((format!("Discord encode failed: {e}"), now_secs + 2.0));
+                        let msg = if e == "Cancelled" {
+                            "Discord encode cancelled".to_owned()
+                        } else {
+                            format!("Discord encode failed: {e}")
+                        };
+                        self.status_banner = Some((msg, now_secs + 2.0));
                     }
                 }
             }
@@ -585,6 +603,12 @@ impl RewindUiState {
             self.last_poll_secs = now_secs;
             self.send_async(IpcRequest::GetSnapshot);
         }
+        let repaint_ms = if !self.daemon_connected || self.restarting_from_pid.is_some() {
+            80
+        } else {
+            400
+        };
+        ctx.request_repaint_after(std::time::Duration::from_millis(repaint_ms));
     }
 
     pub fn start_discord_encode(
@@ -605,20 +629,33 @@ impl RewindUiState {
         let dur_hint = clip.duration_secs;
         let prog = Arc::new(AtomicU32::new(0));
         let prog_w = prog.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_w = cancel.clone();
         let (tx, rx) = mpsc::channel();
         self.discord_encode_progress = Some(prog);
+        self.discord_encode_cancel = Some(cancel);
         self.discord_encode_rx = Some(rx);
         self.status_banner = Some(("Encoding for Discord (<10 MB)...".to_owned(), now_secs));
         thread::spawn(move || {
-            let res = rewind::transcoder::encode_for_discord(
+            let res = rewind::transcoder::encode_for_discord_cancellable(
                 &src_path,
                 &out_path,
                 trim_range,
                 dur_hint,
                 &prog_w,
+                &cancel_w,
             );
             let _ = tx.send(res);
         });
+    }
+
+    pub fn cancel_discord_encode(&mut self, now_secs: f64) {
+        if let Some(cancel) = self.discord_encode_cancel.take() {
+            cancel.store(true, Ordering::Release);
+        }
+        self.discord_encode_progress = None;
+        self.discord_encode_rx = None;
+        self.status_banner = Some(("Discord encode cancelled".to_owned(), now_secs));
     }
 
     pub fn push_config_update(&mut self, now_secs: f64) {
@@ -820,6 +857,50 @@ impl RewindUiState {
             set_active_window_borderless_fullscreen(false);
             self.viewport_fullscreen_applied = false;
         }
+    }
+
+    pub fn start_theme_reveal(
+        &mut self,
+        origin: egui::Pos2,
+        now_secs: f64,
+        old_accent: Color32,
+        old_brightness: u32,
+    ) {
+        self.theme_reveal = Some(ThemeReveal {
+            origin,
+            started_at: now_secs,
+            duration_secs: 0.62,
+            old_accent,
+            old_bg_texture: self.bg_texture.clone(),
+            old_brightness,
+        });
+    }
+
+    pub fn active_theme_reveal(
+        &mut self,
+        ctx: &egui::Context,
+        now_secs: f64,
+    ) -> Option<(egui::Pos2, f32, Color32, Option<TextureHandle>, u32)> {
+        let rev = self.theme_reveal.as_ref()?;
+        let t = ((now_secs - rev.started_at) / rev.duration_secs as f64).clamp(0.0, 1.0) as f32;
+        if t >= 1.0 {
+            self.theme_reveal = None;
+            return None;
+        }
+        ctx.request_repaint();
+        let ease = 1.0 - (1.0 - t).powi(3);
+        let sr = ctx.screen_rect();
+        let max_r = [sr.left_top(), sr.right_top(), sr.left_bottom(), sr.right_bottom()]
+            .into_iter()
+            .map(|c| rev.origin.distance(c))
+            .fold(1.0_f32, f32::max);
+        Some((
+            rev.origin,
+            (max_r + 4.0) * ease,
+            rev.old_accent,
+            rev.old_bg_texture.clone(),
+            rev.old_brightness,
+        ))
     }
 
     pub fn ensure_background_loaded(&mut self, ctx: &egui::Context) -> Option<[u8; 3]> {
@@ -1037,7 +1118,7 @@ fn extract_vibrant_accent_and_tint(img: &image::RgbaImage) -> ([u8; 3], Color32)
 
 fn empty_snapshot() -> DaemonSnapshot {
     DaemonSnapshot {
-        config: AppConfig::default(),
+        config: AppConfig::load_from_dir(&AppConfig::app_data_dir()),
         hardware: HardwareInfo::default(),
         replay_on: false,
         capture_active: false,

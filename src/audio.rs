@@ -2,15 +2,16 @@ use std::collections::VecDeque;
 use std::f32::consts::TAU;
 use std::sync::OnceLock;
 
-use windows::core::PCWSTR;
+use windows::core::{GUID, PCWSTR};
 use windows::Win32::Media::Audio::{
-    eCapture, eCommunications, eMultimedia, eRender, waveInGetDevCapsW, waveInGetNumDevs,
-    waveOutClose, waveOutGetDevCapsW, waveOutGetNumDevs, waveOutOpen, waveOutPrepareHeader,
-    waveOutReset, waveOutUnprepareHeader, waveOutWrite, IAudioCaptureClient, IAudioClient,
-    IMMDevice, IMMDeviceEnumerator, MMDeviceEnumerator, PlaySoundW, AUDCLNT_BUFFERFLAGS_SILENT,
-    AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM, AUDCLNT_STREAMFLAGS_LOOPBACK,
-    AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY, CALLBACK_NULL, HWAVEOUT, SND_ASYNC, SND_MEMORY,
-    SND_NODEFAULT, WAVEFORMATEX, WAVEHDR, WAVEINCAPSW, WAVEOUTCAPSW, WAVE_FORMAT_PCM, WHDR_DONE,
+    eCapture, eCommunications, eConsole, eMultimedia, eRender, waveInGetDevCapsW,
+    waveInGetNumDevs, waveOutClose, waveOutGetDevCapsW, waveOutGetNumDevs, waveOutOpen,
+    waveOutPrepareHeader, waveOutReset, waveOutUnprepareHeader, waveOutWrite, IAudioCaptureClient,
+    IAudioClient, IMMDevice, IMMDeviceEnumerator, MMDeviceEnumerator, PlaySoundW,
+    AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
+    AUDCLNT_STREAMFLAGS_LOOPBACK, AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY, CALLBACK_NULL, HWAVEOUT,
+    SND_ASYNC, SND_MEMORY, SND_NODEFAULT, WAVEFORMATEX, WAVEHDR, WAVEINCAPSW, WAVEOUTCAPSW,
+    WAVE_FORMAT_PCM, WHDR_DONE,
 };
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_ALL,
@@ -200,11 +201,61 @@ unsafe fn resolve_waveout_endpoint_id(device_hint: &str) -> Option<Vec<u16>> {
     Some(buf)
 }
 
+#[derive(Debug, Clone, Copy)]
+struct CaptureFormat {
+    channels: u16,
+    sample_rate: u32,
+    bits_per_sample: u16,
+    is_float: bool,
+}
+
+impl CaptureFormat {
+    const fn pcm_48k(channels: u16) -> Self {
+        Self {
+            channels,
+            sample_rate: 48_000,
+            bits_per_sample: 16,
+            is_float: false,
+        }
+    }
+}
+
+const KSDATAFORMAT_SUBTYPE_IEEE_FLOAT: GUID =
+    GUID::from_u128(0x00000003_0000_0010_8000_00aa00389b71);
+const WAVE_FORMAT_IEEE_FLOAT_TAG: u16 = 0x0003;
+const WAVE_FORMAT_EXTENSIBLE_TAG: u16 = 0xFFFE;
+
+unsafe fn parse_wave_format(fmt: *const WAVEFORMATEX) -> Option<CaptureFormat> {
+    if fmt.is_null() {
+        return None;
+    }
+    let wf = &*fmt;
+    let tag = wf.wFormatTag;
+    let channels = wf.nChannels.max(1);
+    let sample_rate = wf.nSamplesPerSec.max(8_000);
+    let bits_per_sample = wf.wBitsPerSample.max(8);
+    let is_float = if tag == WAVE_FORMAT_IEEE_FLOAT_TAG {
+        true
+    } else if tag == WAVE_FORMAT_EXTENSIBLE_TAG && wf.cbSize >= 22 {
+        let sub_ptr = (fmt as *const u8).add(24) as *const GUID;
+        let sub = std::ptr::read_unaligned(sub_ptr);
+        sub == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT
+    } else {
+        false
+    };
+    Some(CaptureFormat {
+        channels,
+        sample_rate,
+        bits_per_sample,
+        is_float,
+    })
+}
+
 pub struct WasapiTrackStream {
     audio_client: IAudioClient,
     capture_client: IAudioCaptureClient,
     track: PacketTrack,
-    channels: u16,
+    fmt: CaptureFormat,
     last_packet_qpc: i64,
 }
 
@@ -213,38 +264,82 @@ impl WasapiTrackStream {
         Self::open_loopback("Default System Output")
     }
 
+    unsafe fn try_init_loopback_device(dev: &IMMDevice) -> Option<Self> {
+        // 1) Fast path: 48kHz stereo PCM16 with WASAPI autoconvert
+        if let Ok(client) = dev.Activate::<IAudioClient>(CLSCTX_ALL, None) {
+            let fmt = pcm_48k_format(2);
+            let flags = AUDCLNT_STREAMFLAGS_LOOPBACK
+                | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
+                | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
+            if client
+                .Initialize(AUDCLNT_SHAREMODE_SHARED, flags, 2_000_000, 0, &fmt, None)
+                .is_ok()
+            {
+                if let Ok(capture_client) = client.GetService::<IAudioCaptureClient>() {
+                    if client.Start().is_ok() {
+                        return Some(Self {
+                            audio_client: client,
+                            capture_client,
+                            track: PacketTrack::GameAudio,
+                            fmt: CaptureFormat::pcm_48k(2),
+                            last_packet_qpc: 0,
+                        });
+                    }
+                }
+            }
+        }
+
+        // 2) Fallback: native endpoint mix format without AUTOCONVERTPCM
+        //    (required by many spatial/7.1/44.1kHz/96kHz/Win11 24H2-26H2 drivers)
+        let client: IAudioClient = dev.Activate(CLSCTX_ALL, None).ok()?;
+        let mix_fmt = client.GetMixFormat().ok()?;
+        let parsed = parse_wave_format(mix_fmt);
+        let init_res = client.Initialize(
+            AUDCLNT_SHAREMODE_SHARED,
+            AUDCLNT_STREAMFLAGS_LOOPBACK,
+            2_000_000,
+            0,
+            mix_fmt,
+            None,
+        );
+        CoTaskMemFree(Some(mix_fmt.cast()));
+        init_res.ok()?;
+        let cap_fmt = parsed?;
+        let capture_client: IAudioCaptureClient = client.GetService().ok()?;
+        client.Start().ok()?;
+
+        Some(Self {
+            audio_client: client,
+            capture_client,
+            track: PacketTrack::GameAudio,
+            fmt: cap_fmt,
+            last_packet_qpc: 0,
+        })
+    }
+
     pub fn open_loopback(device_hint: &str) -> Option<Self> {
         unsafe {
             let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
             let enumerator: IMMDeviceEnumerator =
                 CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
             let trimmed = device_hint.trim();
-            let dev: Option<IMMDevice> =
-                if !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("Default System Output") {
-                    resolve_waveout_endpoint_id(trimmed)
-                        .and_then(|id| enumerator.GetDevice(PCWSTR(id.as_ptr())).ok())
-                } else {
-                    None
-                };
-            let dev = dev.or_else(|| enumerator.GetDefaultAudioEndpoint(eRender, eMultimedia).ok())?;
-            let client: IAudioClient = dev.Activate(CLSCTX_ALL, None).ok()?;
-            let fmt = pcm_48k_format(2);
-            let flags = AUDCLNT_STREAMFLAGS_LOOPBACK
-                | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
-                | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
-            client
-                .Initialize(AUDCLNT_SHAREMODE_SHARED, flags, 2_000_000, 0, &fmt, None)
-                .ok()?;
-            let capture_client: IAudioCaptureClient = client.GetService().ok()?;
-            client.Start().ok()?;
-
-            Some(Self {
-                audio_client: client,
-                capture_client,
-                track: PacketTrack::GameAudio,
-                channels: 2,
-                last_packet_qpc: 0,
-            })
+            if !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("Default System Output") {
+                if let Some(dev) = resolve_waveout_endpoint_id(trimmed)
+                    .and_then(|id| enumerator.GetDevice(PCWSTR(id.as_ptr())).ok())
+                {
+                    if let Some(stream) = Self::try_init_loopback_device(&dev) {
+                        return Some(stream);
+                    }
+                }
+            }
+            for role in [eMultimedia, eConsole] {
+                if let Ok(dev) = enumerator.GetDefaultAudioEndpoint(eRender, role) {
+                    if let Some(stream) = Self::try_init_loopback_device(&dev) {
+                        return Some(stream);
+                    }
+                }
+            }
+            None
         }
     }
 
@@ -319,7 +414,7 @@ impl WasapiTrackStream {
                 audio_client: client,
                 capture_client,
                 track: PacketTrack::MicAudio,
-                channels: chosen_ch,
+                fmt: CaptureFormat::pcm_48k(chosen_ch),
                 last_packet_qpc: 0,
             })
         }
@@ -328,7 +423,8 @@ impl WasapiTrackStream {
     pub fn drain_packets(&mut self, volume_pct: u32, muted: bool) -> Vec<EncodedPacket> {
         let mut raw_chunks: Vec<(Vec<u8>, i64)> = Vec::new();
         let gain = if muted { 0.0 } else { (volume_pct.min(100) as f32) / 100.0 };
-        let ch = self.channels.max(1) as usize;
+        let fmt = self.fmt;
+        let ch = fmt.channels.max(1) as usize;
 
         unsafe {
             loop {
@@ -350,56 +446,74 @@ impl WasapiTrackStream {
                 }
 
                 let frames = num_frames as usize;
-                let pcm = if frames == 0 {
-                    Vec::new()
-                } else if (flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32) != 0 || muted || data_ptr.is_null() {
-                    vec![0_u8; frames * 4]
-                } else if ch == 1 {
-                    let src_bytes = std::slice::from_raw_parts(data_ptr, frames * 2);
-                    let mut out = Vec::with_capacity(frames * 4);
-                    for s_bytes in src_bytes.chunks_exact(2) {
-                        let raw = i16::from_le_bytes([s_bytes[0], s_bytes[1]]);
-                        let scaled = ((raw as f32) * gain).clamp(-32768.0, 32767.0) as i16;
-                        let b = scaled.to_le_bytes();
-                        out.extend_from_slice(&b);
-                        out.extend_from_slice(&b);
-                    }
-                    out
-                } else {
-                    let src_bytes = std::slice::from_raw_parts(data_ptr, frames * ch * 2);
-                    let mut out = Vec::with_capacity(frames * 4);
-                    let mut peak_l = 0_i32;
-                    let mut peak_r = 0_i32;
-                    for frame in src_bytes.chunks_exact(ch * 2) {
-                        let l_raw = i16::from_le_bytes([frame[0], frame[1]]);
-                        let r_raw = i16::from_le_bytes([frame[2], frame[3]]);
-                        let l = ((l_raw as f32) * gain).clamp(-32768.0, 32767.0) as i16;
-                        let r = ((r_raw as f32) * gain).clamp(-32768.0, 32767.0) as i16;
-                        peak_l = peak_l.max((l as i32).abs());
-                        peak_r = peak_r.max((r as i32).abs());
-                        out.extend_from_slice(&l.to_le_bytes());
-                        out.extend_from_slice(&r.to_le_bytes());
-                    }
-                    if self.track == PacketTrack::MicAudio {
-                        if peak_l > 64 && peak_r == 0 {
-                            for stereo in out.chunks_exact_mut(4) {
-                                stereo[2] = stereo[0];
-                                stereo[3] = stereo[1];
-                            }
-                        } else if peak_r > 64 && peak_l == 0 {
-                            for stereo in out.chunks_exact_mut(4) {
-                                stereo[0] = stereo[2];
-                                stereo[1] = stereo[3];
+                let silent = (flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32) != 0 || muted || data_ptr.is_null();
+                let (pcm, out_frames) = if frames == 0 {
+                    (Vec::new(), 0)
+                } else if silent {
+                    let out_f = if fmt.sample_rate == 48_000 {
+                        frames
+                    } else {
+                        ((frames as u64 * 48_000 + (fmt.sample_rate as u64 / 2))
+                            / fmt.sample_rate.max(1) as u64)
+                            .max(1) as usize
+                    };
+                    (vec![0_u8; out_f * 4], out_f)
+                } else if fmt.sample_rate == 48_000 && !fmt.is_float && fmt.bits_per_sample == 16 && (ch == 1 || ch == 2) {
+                    let out = if ch == 1 {
+                        let src_bytes = std::slice::from_raw_parts(data_ptr, frames * 2);
+                        let mut out = Vec::with_capacity(frames * 4);
+                        for s_bytes in src_bytes.chunks_exact(2) {
+                            let raw = i16::from_le_bytes([s_bytes[0], s_bytes[1]]);
+                            let scaled = ((raw as f32) * gain).clamp(-32768.0, 32767.0) as i16;
+                            let b = scaled.to_le_bytes();
+                            out.extend_from_slice(&b);
+                            out.extend_from_slice(&b);
+                        }
+                        out
+                    } else {
+                        let src_bytes = std::slice::from_raw_parts(data_ptr, frames * 4);
+                        let mut out = Vec::with_capacity(frames * 4);
+                        let mut peak_l = 0_i32;
+                        let mut peak_r = 0_i32;
+                        for frame in src_bytes.chunks_exact(4) {
+                            let l_raw = i16::from_le_bytes([frame[0], frame[1]]);
+                            let r_raw = i16::from_le_bytes([frame[2], frame[3]]);
+                            let l = ((l_raw as f32) * gain).clamp(-32768.0, 32767.0) as i16;
+                            let r = ((r_raw as f32) * gain).clamp(-32768.0, 32767.0) as i16;
+                            peak_l = peak_l.max((l as i32).abs());
+                            peak_r = peak_r.max((r as i32).abs());
+                            out.extend_from_slice(&l.to_le_bytes());
+                            out.extend_from_slice(&r.to_le_bytes());
+                        }
+                        if self.track == PacketTrack::MicAudio {
+                            if peak_l > 64 && peak_r == 0 {
+                                for stereo in out.chunks_exact_mut(4) {
+                                    stereo[2] = stereo[0];
+                                    stereo[3] = stereo[1];
+                                }
+                            } else if peak_r > 64 && peak_l == 0 {
+                                for stereo in out.chunks_exact_mut(4) {
+                                    stereo[0] = stereo[2];
+                                    stereo[1] = stereo[3];
+                                }
                             }
                         }
-                    }
-                    out
+                        out
+                    };
+                    (out, frames)
+                } else {
+                    let bytes_per_sample = (fmt.bits_per_sample as usize / 8).max(1);
+                    let frame_bytes = ch * bytes_per_sample;
+                    let src_bytes = std::slice::from_raw_parts(data_ptr, frames * frame_bytes);
+                    let out = convert_raw_to_48k_stereo_i16(src_bytes, fmt, gain);
+                    let out_f = out.len() / 4;
+                    (out, out_f)
                 };
 
                 let _ = self.capture_client.ReleaseBuffer(num_frames);
 
-                if !pcm.is_empty() {
-                    let dur_100ns = (((num_frames as i64) * 10_000_000) / 48_000).max(10_000);
+                if !pcm.is_empty() && out_frames > 0 {
+                    let dur_100ns = (((out_frames as i64) * 10_000_000) / 48_000).max(10_000);
                     raw_chunks.push((pcm, dur_100ns));
                 }
             }
@@ -432,6 +546,84 @@ impl WasapiTrackStream {
 
         packets
     }
+}
+
+fn read_sample_norm(bytes: &[u8], bits: u16, is_float: bool) -> f32 {
+    if is_float && bits == 32 && bytes.len() >= 4 {
+        f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]).clamp(-1.0, 1.0)
+    } else if !is_float && bits == 16 && bytes.len() >= 2 {
+        (i16::from_le_bytes([bytes[0], bytes[1]]) as f32) / 32768.0
+    } else if !is_float && bits == 24 && bytes.len() >= 3 {
+        let v = ((bytes[2] as i8 as i32) << 16) | ((bytes[1] as i32) << 8) | (bytes[0] as i32);
+        (v as f32) / 8_388_608.0
+    } else if !is_float && bits == 32 && bytes.len() >= 4 {
+        (i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f32) / 2_147_483_648.0
+    } else {
+        0.0
+    }
+}
+
+fn convert_raw_to_48k_stereo_i16(src_bytes: &[u8], fmt: CaptureFormat, gain: f32) -> Vec<u8> {
+    let ch = fmt.channels.max(1) as usize;
+    let bps = (fmt.bits_per_sample as usize / 8).max(1);
+    let frame_bytes = ch * bps;
+    let in_frames = src_bytes.len() / frame_bytes;
+    if in_frames == 0 {
+        return Vec::new();
+    }
+
+    let mut stereo_f32: Vec<[f32; 2]> = Vec::with_capacity(in_frames);
+    for frame in src_bytes.chunks_exact(frame_bytes) {
+        let l = read_sample_norm(&frame[0..bps], fmt.bits_per_sample, fmt.is_float);
+        let r = if ch >= 2 {
+            read_sample_norm(&frame[bps..bps * 2], fmt.bits_per_sample, fmt.is_float)
+        } else {
+            l
+        };
+        let (dl, dr) = if ch >= 6 {
+            let fc = read_sample_norm(&frame[bps * 2..bps * 3], fmt.bits_per_sample, fmt.is_float);
+            let sl = read_sample_norm(&frame[bps * 4..bps * 5], fmt.bits_per_sample, fmt.is_float);
+            let sr = read_sample_norm(&frame[bps * 5..bps * 6], fmt.bits_per_sample, fmt.is_float);
+            (
+                (l + fc * 0.707 + sl * 0.5).clamp(-1.0, 1.0),
+                (r + fc * 0.707 + sr * 0.5).clamp(-1.0, 1.0),
+            )
+        } else {
+            (l, r)
+        };
+        stereo_f32.push([dl * gain, dr * gain]);
+    }
+
+    if fmt.sample_rate == 48_000 {
+        let mut out = Vec::with_capacity(in_frames * 4);
+        for [l, r] in stereo_f32 {
+            let li = (l * 32767.0).clamp(-32768.0, 32767.0) as i16;
+            let ri = (r * 32767.0).clamp(-32768.0, 32767.0) as i16;
+            out.extend_from_slice(&li.to_le_bytes());
+            out.extend_from_slice(&ri.to_le_bytes());
+        }
+        return out;
+    }
+
+    let out_frames = ((in_frames as u64 * 48_000 + (fmt.sample_rate as u64 / 2))
+        / fmt.sample_rate.max(1) as u64)
+        .max(1) as usize;
+    let mut out = Vec::with_capacity(out_frames * 4);
+    let step = (fmt.sample_rate as f64) / 48_000.0;
+    let max_idx = in_frames.saturating_sub(1);
+    for i in 0..out_frames {
+        let pos = (i as f64) * step;
+        let idx0 = (pos.floor() as usize).min(max_idx);
+        let idx1 = (idx0 + 1).min(max_idx);
+        let frac = (pos - (idx0 as f64)).clamp(0.0, 1.0) as f32;
+        let l = stereo_f32[idx0][0] + (stereo_f32[idx1][0] - stereo_f32[idx0][0]) * frac;
+        let r = stereo_f32[idx0][1] + (stereo_f32[idx1][1] - stereo_f32[idx0][1]) * frac;
+        let li = (l * 32767.0).clamp(-32768.0, 32767.0) as i16;
+        let ri = (r * 32767.0).clamp(-32768.0, 32767.0) as i16;
+        out.extend_from_slice(&li.to_le_bytes());
+        out.extend_from_slice(&ri.to_le_bytes());
+    }
+    out
 }
 
 impl Drop for WasapiTrackStream {
@@ -635,5 +827,39 @@ mod tests {
                 assert_eq!(p.data.len() % 4, 0);
             }
         }
+    }
+
+    #[test]
+    fn opens_system_loopback_and_drains_stereo_pcm() {
+        let mut s = WasapiTrackStream::open_loopback("Default System Output")
+            .expect("Expected default system loopback to open");
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        let pkts = s.drain_packets(100, false);
+        assert!(!pkts.is_empty());
+        for p in &pkts {
+            assert_eq!(p.track, PacketTrack::GameAudio);
+            assert_eq!(p.data.len() % 4, 0);
+        }
+    }
+
+    #[test]
+    fn converts_44100_float_surround_to_48k_stereo_pcm() {
+        let fmt = CaptureFormat {
+            channels: 6,
+            sample_rate: 44_100,
+            bits_per_sample: 32,
+            is_float: true,
+        };
+        let mut raw = Vec::new();
+        for _ in 0..441 {
+            for ch in 0..6 {
+                let v: f32 = if ch == 0 { 0.5 } else { 0.0 };
+                raw.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        let out = convert_raw_to_48k_stereo_i16(&raw, fmt, 1.0);
+        assert_eq!(out.len(), 480 * 4);
+        let l0 = i16::from_le_bytes([out[0], out[1]]);
+        assert!(l0 > 15_000);
     }
 }

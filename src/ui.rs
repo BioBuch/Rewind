@@ -1,6 +1,6 @@
 use crate::art::{
-    paint_empty_thumb_surface, paint_fluent_background, paint_game_badge_initial, paint_icon,
-    paint_rounded_image, UiIcon,
+    paint_empty_thumb_surface, paint_fluent_background_reveal, paint_game_badge_initial,
+    paint_icon, paint_rounded_image, UiIcon,
 };
 use crate::state::{
     ActivePopup, FilterPill, NavTab, RebindTarget, RewindUiState, SettingsCategory, SortOrder,
@@ -41,6 +41,30 @@ impl ThemeAccent {
     fn soft_bg(self) -> Color32 {
         Color32::from_rgba_unmultiplied(self.0.r(), self.0.g(), self.0.b(), 38)
     }
+}
+
+thread_local! {
+    static THEME_SWEEP: std::cell::Cell<Option<(Pos2, f32, Color32, Color32)>> =
+        const { std::cell::Cell::new(None) };
+}
+
+fn sweep_color(pos: Pos2, c: Color32) -> Color32 {
+    THEME_SWEEP.with(|cell| {
+        let Some((origin, radius, old_ac, new_ac)) = cell.get() else {
+            return c;
+        };
+        if c != new_ac {
+            return c;
+        }
+        let dist = pos.distance(origin);
+        let blend = ((radius - dist) * 0.5).clamp(0.0, 1.0);
+        lerp_color(old_ac, new_ac, blend)
+    })
+}
+
+fn sweep_soft_bg(pos: Pos2, ac: Color32) -> Color32 {
+    let c = sweep_color(pos, ac);
+    Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 36)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -108,8 +132,18 @@ impl UiPalette {
                 ab.saturating_add(14),
                 238,
             ),
-            border: Color32::from_rgba_premultiplied(20, 20, 20, 20),
-            border_bright: Color32::from_rgba_premultiplied(32, 32, 32, 32),
+            border: Color32::from_rgba_unmultiplied(
+                ar.saturating_add(16),
+                ag.saturating_add(16),
+                ab.saturating_add(18),
+                42,
+            ),
+            border_bright: Color32::from_rgba_unmultiplied(
+                ar.saturating_add(34),
+                ag.saturating_add(34),
+                ab.saturating_add(38),
+                72,
+            ),
             icon_box_bg: Color32::from_rgba_unmultiplied(255, 255, 255, 16),
             divider_col: Color32::from_rgba_unmultiplied(255, 255, 255, 18),
             track_bg: Color32::from_rgba_unmultiplied(255, 255, 255, 34),
@@ -120,10 +154,189 @@ impl UiPalette {
 
 thread_local! {
     static UI_PAL: std::cell::Cell<UiPalette> = const { std::cell::Cell::new(UiPalette::default_dark()) };
+    static UI_PAL_NEW: std::cell::Cell<UiPalette> = const { std::cell::Cell::new(UiPalette::default_dark()) };
 }
 
 fn ui_pal() -> UiPalette {
     UI_PAL.with(|p| p.get())
+}
+
+fn ui_pal_new() -> UiPalette {
+    UI_PAL_NEW.with(|p| p.get())
+}
+
+fn clip_poly_to_rect(poly: &[Pos2], rect: Rect, corner_r: f32) -> Vec<Pos2> {
+    fn clip_edge(pts: Vec<Pos2>, inside: impl Fn(Pos2) -> bool, intersect: impl Fn(Pos2, Pos2) -> Pos2) -> Vec<Pos2> {
+        let mut out = Vec::with_capacity(pts.len() + 2);
+        if pts.is_empty() {
+            return out;
+        }
+        let mut prev = *pts.last().unwrap();
+        let mut prev_in = inside(prev);
+        for &cur in &pts {
+            let cur_in = inside(cur);
+            if cur_in {
+                if !prev_in {
+                    out.push(intersect(prev, cur));
+                }
+                out.push(cur);
+            } else if prev_in {
+                out.push(intersect(prev, cur));
+            }
+            prev = cur;
+            prev_in = cur_in;
+        }
+        out
+    }
+    fn clip_halfplane(pts: Vec<Pos2>, nx: f32, ny: f32, c: f32) -> Vec<Pos2> {
+        clip_edge(
+            pts,
+            |p| nx * p.x + ny * p.y >= c,
+            |a, b| {
+                let da = nx * a.x + ny * a.y - c;
+                let db = nx * b.x + ny * b.y - c;
+                let t = da / (da - db);
+                Pos2::new(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)
+            },
+        )
+    }
+    let mut pts = poly.to_vec();
+    pts = clip_halfplane(pts, 1.0, 0.0, rect.left());
+    pts = clip_halfplane(pts, -1.0, 0.0, -rect.right());
+    pts = clip_halfplane(pts, 0.0, 1.0, rect.top());
+    pts = clip_halfplane(pts, 0.0, -1.0, -rect.bottom());
+    if corner_r > 0.5 {
+        let cr = corner_r
+            .min(rect.width() * 0.5)
+            .min(rect.height() * 0.5);
+        let tl = (rect.left() + cr, rect.top() + cr);
+        let tr = (rect.right() - cr, rect.top() + cr);
+        let bl = (rect.left() + cr, rect.bottom() - cr);
+        let br = (rect.right() - cr, rect.bottom() - cr);
+        for k in 1..=12 {
+            let theta = (k as f32 / 13.0) * std::f32::consts::FRAC_PI_2;
+            let (ct, st) = (theta.cos(), theta.sin());
+            pts = clip_halfplane(pts, ct, st, tl.0 * ct + tl.1 * st - cr);
+            pts = clip_halfplane(pts, -ct, st, -tr.0 * ct + tr.1 * st - cr);
+            pts = clip_halfplane(pts, ct, -st, bl.0 * ct - bl.1 * st - cr);
+            pts = clip_halfplane(pts, -ct, -st, -br.0 * ct - br.1 * st - cr);
+        }
+    }
+    pts
+}
+
+fn build_swept_panel_shapes(
+    rect: Rect,
+    old_fill: Color32,
+    new_fill: Color32,
+    corner_r: f32,
+) -> Vec<Shape> {
+    let Some((origin, radius, _, _)) = THEME_SWEEP.with(|c| c.get()) else {
+        return vec![Shape::rect_filled(rect, Rounding::same(corner_r), old_fill)];
+    };
+    if old_fill == new_fill {
+        return vec![Shape::rect_filled(rect, Rounding::same(corner_r), old_fill)];
+    }
+    let r = radius.max(1.0);
+    let outer = [rect.left_top(), rect.right_top(), rect.left_bottom(), rect.right_bottom()]
+        .into_iter()
+        .map(|c| origin.distance(c))
+        .fold(r + 10.0, f32::max)
+        + 10.0;
+    let segs = 64usize;
+    let mut out = Vec::new();
+
+    let circle_pts: Vec<Pos2> = (0..segs)
+        .map(|i| {
+            let ang = (i as f32 / segs as f32) * std::f32::consts::TAU;
+            Pos2::new(origin.x + ang.cos() * r, origin.y + ang.sin() * r)
+        })
+        .collect();
+    let clipped_in = clip_poly_to_rect(&circle_pts, rect, corner_r);
+    if clipped_in.len() >= 3 {
+        let mut mesh_in = egui::Mesh::default();
+        for &pt in &clipped_in {
+            mesh_in.colored_vertex(pt, new_fill);
+        }
+        for i in 1..clipped_in.len() - 1 {
+            mesh_in.add_triangle(0, i as u32, (i + 1) as u32);
+        }
+        out.push(Shape::mesh(mesh_in));
+    }
+
+    if outer > r {
+        let mut mesh_out = egui::Mesh::default();
+        for i in 0..segs {
+            let a0 = (i as f32 / segs as f32) * std::f32::consts::TAU;
+            let a1 = ((i + 1) as f32 / segs as f32) * std::f32::consts::TAU;
+            let quad = [
+                Pos2::new(origin.x + a0.cos() * r, origin.y + a0.sin() * r),
+                Pos2::new(origin.x + a0.cos() * outer, origin.y + a0.sin() * outer),
+                Pos2::new(origin.x + a1.cos() * outer, origin.y + a1.sin() * outer),
+                Pos2::new(origin.x + a1.cos() * r, origin.y + a1.sin() * r),
+            ];
+            let clipped = clip_poly_to_rect(&quad, rect, corner_r);
+            if clipped.len() >= 3 {
+                let base = mesh_out.vertices.len() as u32;
+                for &pt in &clipped {
+                    mesh_out.colored_vertex(pt, old_fill);
+                }
+                for k in 1..clipped.len() - 1 {
+                    mesh_out.add_triangle(base, base + k as u32, base + (k + 1) as u32);
+                }
+            }
+        }
+        if !mesh_out.indices.is_empty() {
+            out.push(Shape::mesh(mesh_out));
+        }
+    }
+    out
+}
+
+fn paint_swept_panel(painter: &egui::Painter, rect: Rect, old_fill: Color32, new_fill: Color32) {
+    let p = painter.with_clip_rect(rect);
+    for s in build_swept_panel_shapes(rect, old_fill, new_fill, 0.0) {
+        p.add(s);
+    }
+}
+
+fn paint_swept_rounded_rect(
+    painter: &egui::Painter,
+    rect: Rect,
+    corner_r: f32,
+    old_fill: Color32,
+    new_fill: Color32,
+    stroke: Stroke,
+) {
+    let p = painter.with_clip_rect(rect);
+    for s in build_swept_panel_shapes(rect, old_fill, new_fill, corner_r) {
+        p.add(s);
+    }
+    if stroke.width > 0.0 && stroke.color.a() > 0 {
+        painter.rect_stroke(rect, Rounding::same(corner_r), stroke);
+    }
+}
+
+fn paint_swept_pill_box(
+    painter: &egui::Painter,
+    rect: Rect,
+    corner_r: f32,
+    hovered: bool,
+    active_border: bool,
+) {
+    let old_fill = if hovered { card_hover() } else { pill_bg() };
+    let new_pal = ui_pal_new();
+    let new_fill = if hovered { new_pal.card_hover } else { new_pal.pill_bg };
+    let old_border = if active_border { border_bright() } else { border_col() };
+    let new_border = if active_border { new_pal.border_bright } else { new_pal.border };
+    let border = if let Some((origin, radius, _, _)) = THEME_SWEEP.with(|c| c.get()) {
+        let dist = rect.center().distance(origin);
+        let blend = ((radius - dist) * 0.5).clamp(0.0, 1.0);
+        lerp_color(old_border, new_border, blend)
+    } else {
+        old_border
+    };
+    paint_swept_rounded_rect(painter, rect, corner_r, old_fill, new_fill, Stroke::new(1.0_f32, border));
 }
 fn bar_bg() -> Color32 { ui_pal().bar_bg }
 fn sidebar_bg() -> Color32 { ui_pal().sidebar_bg }
@@ -186,43 +399,61 @@ pub fn render_app(ctx: &egui::Context, state: &mut RewindUiState) {
     }
 
     if let Some(new_rgb) = state.ensure_background_loaded(ctx) {
-        if state.snapshot.config.custom_accent_rgb != Some(new_rgb) {
+        if state.snapshot.config.auto_adjust_palette
+            && state.snapshot.config.custom_accent_rgb != Some(new_rgb)
+        {
             state.snapshot.config.custom_accent_rgb = Some(new_rgb);
-            if state.snapshot.config.auto_adjust_palette {
-                state.push_config_update(now_secs);
-            }
+            state.push_config_update(now_secs);
         }
     }
 
     let accent = ThemeAccent::from_config(&state.snapshot.config);
-    state.ensure_app_icon_synced(ctx, accent.color());
-    let pal = if state.bg_texture.is_some() {
-        let ambient = if state.snapshot.config.auto_adjust_palette {
-            state
-                .bg_ambient_tint
-                .unwrap_or(Color32::from_rgb(16, 16, 18))
+    let active_reveal = state.active_theme_reveal(ctx, now_secs);
+    let pal_accent = active_reveal
+        .as_ref()
+        .map(|(_, _, old_ac, _, _)| *old_ac)
+        .unwrap_or_else(|| accent.color());
+    let build_pal = |ac: Color32| {
+        if state.bg_texture.is_some() {
+            let ambient = if state.snapshot.config.auto_adjust_palette {
+                state
+                    .bg_ambient_tint
+                    .unwrap_or(Color32::from_rgb(16, 16, 18))
+            } else {
+                Color32::from_rgb(
+                    (ac.r() / 8).max(10),
+                    (ac.g() / 8).max(10),
+                    (ac.b() / 8).max(10),
+                )
+            };
+            UiPalette::from_ambient(ambient)
         } else {
-            let ac = accent.color();
-            Color32::from_rgb(
-                (ac.r() / 8).max(10),
-                (ac.g() / 8).max(10),
-                (ac.b() / 8).max(10),
-            )
-        };
-        UiPalette::from_ambient(ambient)
-    } else {
-        UiPalette::default_dark()
+            UiPalette::default_dark()
+        }
     };
-    UI_PAL.with(|p| p.set(pal));
+    UI_PAL.with(|p| p.set(build_pal(pal_accent)));
+    UI_PAL_NEW.with(|p| p.set(build_pal(accent.color())));
 
     let flash_alpha = compute_clip_flash_alpha(ctx, state, now_secs);
     apply_apple_rounding(ctx);
-    paint_fluent_background(
+    THEME_SWEEP.with(|cell| {
+        cell.set(
+            active_reveal
+                .as_ref()
+                .map(|(origin, r, old_ac, _, _)| (*origin, *r, *old_ac, accent.color())),
+        );
+    });
+    let logo_ac = sweep_color(Pos2::new(27.0, 23.0), accent.color());
+    state.ensure_app_icon_synced(ctx, logo_ac);
+    paint_fluent_background_reveal(
         ctx,
         accent.color(),
         state.bg_texture.as_ref(),
         state.bg_ambient_tint,
         state.snapshot.config.background_brightness,
+        active_reveal
+            .as_ref()
+            .map(|(o, r, oa, ot, ob)| (*o, *r, *oa, ot.as_ref(), *ob)),
     );
 
     let mut pop = PopoverLayout {
@@ -548,11 +779,12 @@ fn render_top_bar(
         .exact_height(46.0)
         .frame(
             egui::Frame::none()
-                .fill(bar_bg())
+                .fill(Color32::TRANSPARENT)
                 .stroke(Stroke::new(1.0_f32, bar_border))
                 .inner_margin(Margin::symmetric(12.0, 6.0)),
         )
         .show(ctx, |ui| {
+            paint_swept_panel(ui.painter(), ui.clip_rect(), bar_bg(), ui_pal_new().bar_bg);
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
 
@@ -862,11 +1094,12 @@ fn render_sidebar(ctx: &egui::Context, state: &mut RewindUiState) {
         .resizable(false)
         .frame(
             egui::Frame::none()
-                .fill(sidebar_bg())
+                .fill(Color32::TRANSPARENT)
                 .stroke(Stroke::new(1.0_f32, border_col()))
                 .inner_margin(Margin::symmetric(6.0, 12.0)),
         )
         .show(ctx, |ui| {
+            paint_swept_panel(ui.painter(), ui.clip_rect(), sidebar_bg(), ui_pal_new().sidebar_bg);
             ui.vertical_centered(|ui| {
                 ui.spacing_mut().item_spacing.y = 8.0;
 
@@ -885,17 +1118,22 @@ fn render_sidebar(ctx: &egui::Context, state: &mut RewindUiState) {
                 for (tab, icon, badge, tip) in items {
                     let active = state.active_tab == tab;
                     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(38.0), Sense::click());
+                    let local_ac = sweep_color(rect.center(), accent.color());
                     if active {
-                        ui.painter().rect_filled(rect, Rounding::same(9.0), accent.soft_bg());
+                        ui.painter().rect_filled(
+                            rect,
+                            Rounding::same(9.0),
+                            Color32::from_rgba_unmultiplied(local_ac.r(), local_ac.g(), local_ac.b(), 38),
+                        );
                         ui.painter().rect_stroke(
                             rect,
                             Rounding::same(9.0),
                             Stroke::new(
                                 1.0_f32,
                                 Color32::from_rgba_unmultiplied(
-                                    accent.color().r(),
-                                    accent.color().g(),
-                                    accent.color().b(),
+                                    local_ac.r(),
+                                    local_ac.g(),
+                                    local_ac.b(),
                                     80,
                                 ),
                             ),
@@ -904,24 +1142,24 @@ fn render_sidebar(ctx: &egui::Context, state: &mut RewindUiState) {
                             Pos2::new(rect.left() - 6.0, rect.top() + 9.0),
                             Pos2::new(rect.left() - 3.0, rect.bottom() - 9.0),
                         );
-                        ui.painter().rect_filled(bar, Rounding::same(1.5), accent.color());
+                        ui.painter().rect_filled(bar, Rounding::same(1.5), local_ac);
                     } else if resp.hovered() {
                         ui.painter()
                             .rect_filled(rect, Rounding::same(9.0), nav_hover_bg());
                     }
 
-                    let icon_col = if active { accent.color() } else { TEXT_MUTED };
+                    let icon_col = if active { local_ac } else { TEXT_MUTED };
                     paint_icon(ui.painter(), rect.shrink(10.0), icon, icon_col);
 
                     if let Some(count) = badge {
                         let b_pos = Pos2::new(rect.right() - 5.0, rect.top() + 6.0);
-                        ui.painter().circle_filled(b_pos, 7.5, accent.color());
+                        ui.painter().circle_filled(b_pos, 7.5, local_ac);
                         ui.painter().text(
                             b_pos,
                             egui::Align2::CENTER_CENTER,
                             count.to_string(),
                             FontId::proportional(9.5),
-                            contrasting_fg(accent.color()),
+                            contrasting_fg(local_ac),
                         );
                     }
 
@@ -961,8 +1199,9 @@ fn render_sidebar(ctx: &egui::Context, state: &mut RewindUiState) {
                         ));
                     }
                     if arc_pts.len() >= 2 {
+                        let ring_ac = sweep_color(ring_center, accent.color());
                         ui.painter()
-                            .add(Shape::line(arc_pts, Stroke::new(2.8_f32, accent.color())));
+                            .add(Shape::line(arc_pts, Stroke::new(2.8_f32, ring_ac)));
                     }
                 }
 
@@ -998,13 +1237,14 @@ fn render_sidebar(ctx: &egui::Context, state: &mut RewindUiState) {
 
                 let is_set = state.active_tab == NavTab::Settings;
                 let (set_rect, set_resp) = ui.allocate_exact_size(Vec2::splat(38.0), Sense::click());
+                let gear_ac = sweep_color(set_rect.center(), accent.color());
                 if is_set {
                     ui.painter()
-                        .rect_filled(set_rect, Rounding::same(9.0), accent.soft_bg());
+                        .rect_filled(set_rect, Rounding::same(9.0), sweep_soft_bg(set_rect.center(), accent.color()));
                     ui.painter().rect_stroke(
                         set_rect,
                         Rounding::same(9.0),
-                        Stroke::new(1.0_f32, accent.color()),
+                        Stroke::new(1.0_f32, gear_ac),
                     );
                 } else if set_resp.hovered() {
                     ui.painter()
@@ -1014,7 +1254,7 @@ fn render_sidebar(ctx: &egui::Context, state: &mut RewindUiState) {
                     ui.painter(),
                     set_rect.shrink(10.0),
                     UiIcon::Gear,
-                    if is_set { accent.color() } else { TEXT_MUTED },
+                    if is_set { gear_ac } else { TEXT_MUTED },
                 );
                 if set_resp
                     .on_hover_text("Settings")
@@ -1883,14 +2123,31 @@ fn render_settings(
                 ui.horizontal(|ui| {
                     ui.add_space(4.0);
                     let (icon_r, _) = ui.allocate_exact_size(Vec2::splat(34.0), Sense::hover());
-                    if let Some(tex) = &state.app_icon_texture {
-                        ui.painter().image(
-                            tex.id(),
-                            icon_r,
-                            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-                            Color32::WHITE,
-                        );
-                    }
+                    let s_ic_col = sweep_color(icon_r.center(), accent.color());
+                    let prev_tex = ui
+                        .ctx()
+                        .data(|d| d.get_temp::<(Color32, egui::TextureHandle)>(Id::new("set_app_ic")));
+                    let s_tex = match prev_tex {
+                        Some((c, t)) if c == s_ic_col => t,
+                        _ => {
+                            let rgba = rewind::app_icon::render_icon_rgba(s_ic_col, 128);
+                            let img = egui::ColorImage::from_rgba_unmultiplied([128, 128], &rgba);
+                            let t = ui.ctx().load_texture(
+                                "set_app_icon_tex",
+                                img,
+                                egui::TextureOptions::LINEAR,
+                            );
+                            ui.ctx()
+                                .data_mut(|d| d.insert_temp(Id::new("set_app_ic"), (s_ic_col, t.clone())));
+                            t
+                        }
+                    };
+                    ui.painter().image(
+                        s_tex.id(),
+                        icon_r,
+                        Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                        Color32::WHITE,
+                    );
                     ui.add_space(8.0);
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 1.0;
@@ -1908,9 +2165,10 @@ fn render_settings(
 
                 ui.add_space(12.0);
 
-                egui::Frame::none()
-                    .fill(Color32::from_rgba_unmultiplied(30, 34, 44, 210))
-                    .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 22)))
+                let search_bg_idx = ui.painter().add(Shape::Noop);
+                let search_frame = egui::Frame::none()
+                    .fill(Color32::TRANSPARENT)
+                    .stroke(Stroke::new(1.0_f32, border_col()))
                     .rounding(Rounding::same(6.0))
                     .inner_margin(Margin::symmetric(10.0, 5.0))
                     .show(ui, |ui| {
@@ -1927,6 +2185,9 @@ fn render_settings(
                             );
                         });
                     });
+                let sr_rect = search_frame.response.rect;
+                let sr_shapes = build_swept_panel_shapes(sr_rect, pill_bg(), ui_pal_new().pill_bg, 6.0);
+                ui.painter().with_clip_rect(sr_rect).set(search_bg_idx, Shape::Vec(sr_shapes));
 
                 ui.add_space(10.0);
 
@@ -1944,12 +2205,13 @@ fn render_settings(
                     if bg != Color32::TRANSPARENT {
                         ui.painter().rect_filled(row_r, Rounding::same(6.0), bg);
                     }
+                    let cat_ac = sweep_color(row_r.center(), accent.color());
                     if active {
                         let pill = Rect::from_min_size(
                             Pos2::new(row_r.left() + 2.0, row_r.center().y - 8.0),
                             Vec2::new(3.0, 16.0),
                         );
-                        ui.painter().rect_filled(pill, Rounding::same(1.5), accent.color());
+                        ui.painter().rect_filled(pill, Rounding::same(1.5), cat_ac);
                     }
                     let cat_icon = match cat {
                         SettingsCategory::Capture => UiIcon::Monitor,
@@ -1967,7 +2229,7 @@ fn render_settings(
                         Pos2::new(row_r.left() + 20.0, row_r.center().y),
                         Vec2::splat(15.0),
                     );
-                    let ic_col = if active { accent.color() } else { TEXT_MUTED };
+                    let ic_col = if active { cat_ac } else { TEXT_MUTED };
                     paint_icon(ui.painter(), ic_r, cat_icon, ic_col);
                     ui.painter().text(
                         Pos2::new(row_r.left() + 38.0, row_r.center().y),
@@ -2057,44 +2319,28 @@ fn render_settings(
                             "Post-Clip Tail",
                             "Keep recording 5–15 seconds after pressing the clip hotkey",
                             |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 6.0;
-                                    for (secs, label) in [
-                                        (15_u32, "15s"),
-                                        (10, "10s"),
-                                        (5, "5s"),
-                                        (0, "Instant"),
-                                    ] {
-                                        let active =
-                                            state.snapshot.config.clip_post_buffer_secs == secs;
-                                        let fill = if active {
-                                            accent.color()
-                                        } else {
-                                            Color32::from_rgba_unmultiplied(30, 35, 46, 220)
-                                        };
-                                        let txt_col = if active {
-                                            Color32::WHITE
-                                        } else {
-                                            TEXT_MUTED
-                                        };
-                                        let (r, resp) = ui.allocate_exact_size(
-                                            Vec2::new(if secs == 0 { 58.0 } else { 40.0 }, 24.0),
-                                            Sense::click(),
-                                        );
-                                        ui.painter().rect_filled(r, Rounding::same(6.0), fill);
-                                        ui.painter().text(
-                                            r.center(),
-                                            egui::Align2::CENTER_CENTER,
-                                            label,
-                                            FontId::proportional(11.5),
-                                            txt_col,
-                                        );
-                                        if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
-                                            state.snapshot.config.clip_post_buffer_secs = secs;
-                                            cfg_changed = true;
-                                        }
-                                    }
-                                });
+                                let tail_label = match state.snapshot.config.clip_post_buffer_secs {
+                                    0 => "Instant",
+                                    5 => "5 seconds",
+                                    10 => "10 seconds",
+                                    15 => "15 seconds",
+                                    _ => "Instant",
+                                };
+                                let resp = dropdown_pill(
+                                    ui,
+                                    tail_label,
+                                    None,
+                                    None,
+                                    state.active_popup == ActivePopup::SettingsPostClipTail,
+                                    118.0,
+                                );
+                                if resp.clicked() {
+                                    state.toggle_popup(ActivePopup::SettingsPostClipTail);
+                                    pop.toggled_this_frame = true;
+                                }
+                                if state.active_popup == ActivePopup::SettingsPostClipTail {
+                                    pop.anchor = Some(resp.rect);
+                                }
                             },
                         );
 
@@ -2921,26 +3167,36 @@ fn render_settings(
                             |ui| {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 8.0;
-                                    if !bg_path.is_empty() && ui.button("Reset").clicked() {
-                                        state.snapshot.config.background_image_path.clear();
-                                        state.snapshot.config.custom_accent_rgb = None;
-                                        state.bg_cache_key = None;
-                                        state.bg_texture = None;
-                                        state.bg_ambient_tint = None;
-                                        cfg_changed = true;
+                                    if !bg_path.is_empty() {
+                                        let (r_rect, r_resp) =
+                                            ui.allocate_exact_size(Vec2::new(56.0, 28.0), Sense::click());
+                                        paint_swept_pill_box(ui.painter(), r_rect, 6.0, r_resp.hovered(), false);
+                                        ui.painter().text(
+                                            r_rect.center(),
+                                            egui::Align2::CENTER_CENTER,
+                                            "Reset",
+                                            FontId::proportional(11.5),
+                                            TEXT_PRIMARY,
+                                        );
+                                        if r_resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
+                                            state.start_theme_reveal(
+                                                r_rect.center(),
+                                                now_secs,
+                                                accent.color(),
+                                                state.snapshot.config.background_brightness,
+                                            );
+                                            state.snapshot.config.background_image_path.clear();
+                                            state.snapshot.config.auto_adjust_palette = false;
+                                            state.snapshot.config.custom_accent_rgb = None;
+                                            state.bg_cache_key = None;
+                                            state.bg_texture = None;
+                                            state.bg_ambient_tint = None;
+                                            cfg_changed = true;
+                                        }
                                     }
                                     let (b_rect, b_resp) =
                                         ui.allocate_exact_size(Vec2::new(112.0, 28.0), Sense::click());
-                                    ui.painter().rect_filled(
-                                        b_rect,
-                                        Rounding::same(6.0),
-                                        if b_resp.hovered() { card_hover() } else { pill_bg() },
-                                    );
-                                    ui.painter().rect_stroke(
-                                        b_rect,
-                                        Rounding::same(6.0),
-                                        Stroke::new(1.0_f32, border_col()),
-                                    );
+                                    paint_swept_pill_box(ui.painter(), b_rect, 6.0, b_resp.hovered(), false);
                                     ui.painter().text(
                                         b_rect.center(),
                                         egui::Align2::CENTER_CENTER,
@@ -2950,10 +3206,18 @@ fn render_settings(
                                     );
                                     if b_resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
                                         if let Some(chosen) = pick_image_file_dialog() {
+                                            state.start_theme_reveal(
+                                                b_rect.center(),
+                                                now_secs,
+                                                accent.color(),
+                                                state.snapshot.config.background_brightness,
+                                            );
                                             state.snapshot.config.background_image_path = chosen;
                                             state.bg_cache_key = None;
                                             if let Some(rgb) = state.ensure_background_loaded(ui.ctx()) {
-                                                state.snapshot.config.custom_accent_rgb = Some(rgb);
+                                                if state.snapshot.config.auto_adjust_palette {
+                                                    state.snapshot.config.custom_accent_rgb = Some(rgb);
+                                                }
                                             }
                                             cfg_changed = true;
                                         }
@@ -2971,11 +3235,12 @@ fn render_settings(
                             "Background Blur",
                             "Soften custom background image behind cards and navigation",
                             |ui| {
+                                let blur_col = sweep_color(ui.cursor().right_top(), accent.color());
                                 ui.label(
                                     RichText::new(format!("{} px", state.snapshot.config.background_blur))
                                         .size(12.5)
                                         .strong()
-                                        .color(accent.color()),
+                                        .color(blur_col),
                                 );
                             },
                         );
@@ -2999,6 +3264,7 @@ fn render_settings(
                             "Background Brightness",
                             "Adjust wallpaper dimming for contrast behind translucent UI",
                             |ui| {
+                                let br_col = sweep_color(ui.cursor().right_top(), accent.color());
                                 ui.label(
                                     RichText::new(format!(
                                         "{}%",
@@ -3006,7 +3272,7 @@ fn render_settings(
                                     ))
                                     .size(12.5)
                                     .strong()
-                                    .color(accent.color()),
+                                    .color(br_col),
                                 );
                             },
                         );
@@ -3030,33 +3296,57 @@ fn render_settings(
 
                         settings_divider(ui);
 
-                        settings_row(
-                            ui,
-                            UiIcon::Palette,
-                            accent.color(),
-                            "Auto-Adjust Palette from Background",
-                            "Automatically theme accent and gradients from your chosen image",
-                            |ui| {
-                                if toggle_switch(
-                                    ui,
-                                    "auto_palette_switch",
-                                    &mut state.snapshot.config.auto_adjust_palette,
-                                    accent.color(),
-                                ) {
-                                    if state.snapshot.config.auto_adjust_palette {
-                                        if !state.snapshot.config.background_image_path.is_empty() {
-                                            state.bg_cache_key = None;
-                                            if let Some(rgb) = state.ensure_background_loaded(ui.ctx()) {
-                                                state.snapshot.config.custom_accent_rgb = Some(rgb);
+                        let has_bg = !state.snapshot.config.background_image_path.trim().is_empty();
+                        if !has_bg && state.snapshot.config.auto_adjust_palette {
+                            state.snapshot.config.auto_adjust_palette = false;
+                            cfg_changed = true;
+                        }
+                        let auto_row = ui.add_enabled_ui(has_bg, |ui| {
+                            settings_row(
+                                ui,
+                                UiIcon::Palette,
+                                if has_bg { accent.color() } else { TEXT_DIM },
+                                "Auto-Adjust Palette from Background",
+                                if has_bg {
+                                    "Automatically theme accent and gradients from your chosen image"
+                                } else {
+                                    "Choose a Background Picture above to enable auto palette"
+                                },
+                                |ui| {
+                                    if toggle_switch(
+                                        ui,
+                                        "auto_palette_switch",
+                                        &mut state.snapshot.config.auto_adjust_palette,
+                                        accent.color(),
+                                    ) {
+                                        state.start_theme_reveal(
+                                            ui.min_rect().center(),
+                                            now_secs,
+                                            accent.color(),
+                                            state.snapshot.config.background_brightness,
+                                        );
+                                        if state.snapshot.config.auto_adjust_palette {
+                                            if !state.snapshot.config.background_image_path.is_empty() {
+                                                state.bg_cache_key = None;
+                                                if let Some(rgb) = state.ensure_background_loaded(ui.ctx()) {
+                                                    if state.snapshot.config.auto_adjust_palette {
+                                                        state.snapshot.config.custom_accent_rgb = Some(rgb);
+                                                    }
+                                                }
                                             }
+                                        } else {
+                                            state.snapshot.config.custom_accent_rgb = None;
                                         }
-                                    } else {
-                                        state.snapshot.config.custom_accent_rgb = None;
+                                        cfg_changed = true;
                                     }
-                                    cfg_changed = true;
-                                }
-                            },
-                        );
+                                },
+                            );
+                        });
+                        if !has_bg {
+                            auto_row
+                                .response
+                                .on_disabled_hover_text("Choose a Background Picture first");
+                        }
 
                         let show_accent = !state.snapshot.config.auto_adjust_palette;
                         let accent_anim = ui.ctx().animate_bool_with_time(
@@ -3092,15 +3382,25 @@ fn render_settings(
                                                 }
                                                 ui.painter().circle_filled(s_rect.center(), 9.5, swatch.color());
                                                 if s_resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
+                                                    state.start_theme_reveal(
+                                                        s_rect.center(),
+                                                        now_secs,
+                                                        accent.color(),
+                                                        state.snapshot.config.background_brightness,
+                                                    );
                                                     state.snapshot.config.accent_color = swatch;
                                                     state.snapshot.config.custom_accent_rgb = None;
                                                     cfg_changed = true;
                                                 }
                                             }
+                                            let disp_ac = sweep_color(
+                                                ui.cursor().right_top() - Vec2::new(18.0, -12.0),
+                                                accent.color(),
+                                            );
                                             let mut rgb = [
-                                                accent.color().r(),
-                                                accent.color().g(),
-                                                accent.color().b(),
+                                                disp_ac.r(),
+                                                disp_ac.g(),
+                                                disp_ac.b(),
                                             ];
                                             if ui.color_edit_button_srgb(&mut rgb).changed() {
                                                 state.snapshot.config.custom_accent_rgb = Some(rgb);
@@ -3123,18 +3423,32 @@ fn render_settings(
                             |ui| {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 6.0;
-                                    let key_resp = ui
-                                        .add(
-                                            TextEdit::singleline(
-                                                &mut state.snapshot.config.steamgriddb_api_key,
+                                    let key_bg_idx = ui.painter().add(Shape::Noop);
+                                    let key_frame = egui::Frame::none()
+                                        .fill(Color32::TRANSPARENT)
+                                        .stroke(Stroke::new(1.0_f32, border_col()))
+                                        .rounding(Rounding::same(6.0))
+                                        .inner_margin(Margin::symmetric(8.0, 5.0))
+                                        .show(ui, |ui| {
+                                            ui.add(
+                                                TextEdit::singleline(
+                                                    &mut state.snapshot.config.steamgriddb_api_key,
+                                                )
+                                                .password(true)
+                                                .frame(false)
+                                                .desired_width(145.0)
+                                                .hint_text("Paste API key..."),
                                             )
-                                            .password(true)
-                                            .desired_width(155.0)
-                                            .hint_text("Paste API key..."),
-                                        )
-                                        .on_hover_text(
-                                            "Optional: paste a free API key from steamgriddb.com/profile/preferences/api to download real game cover icons for Home, Folders, and filter pills. Leave blank for default letter badges.",
-                                        );
+                                        });
+                                    let kf_rect = key_frame.response.rect;
+                                    let kf_shapes =
+                                        build_swept_panel_shapes(kf_rect, pill_bg(), ui_pal_new().pill_bg, 6.0);
+                                    ui.painter()
+                                        .with_clip_rect(kf_rect)
+                                        .set(key_bg_idx, Shape::Vec(kf_shapes));
+                                    let key_resp = key_frame.inner.on_hover_text(
+                                        "Optional: paste a free API key from steamgriddb.com/profile/preferences/api to download real game cover icons for Home, Folders, and filter pills. Leave blank for default letter badges.",
+                                    );
                                     if key_resp.lost_focus() {
                                         state.clear_game_icon_cache();
                                         cfg_changed = true;
@@ -3290,6 +3604,7 @@ fn render_active_popover(
         ActivePopup::Profile => (236.0, true),
         ActivePopup::SortMenu => (132.0, true),
         ActivePopup::SettingsClipLength => (144.0, true),
+        ActivePopup::SettingsPostClipTail => (144.0, true),
         ActivePopup::SettingsResolution => (108.0, true),
         ActivePopup::SettingsFps => (188.0, true),
         ActivePopup::SettingsCodec => (160.0, true),
@@ -3491,6 +3806,26 @@ fn render_active_popover(
                                     accent,
                                 ) {
                                     state.snapshot.config.clip_length = len;
+                                    state.push_config_update(now_secs);
+                                    state.active_popup = ActivePopup::None;
+                                }
+                            }
+                        }
+                        ActivePopup::SettingsPostClipTail => {
+                            for (secs, lbl) in [
+                                (0_u32, "Instant"),
+                                (5, "5 seconds"),
+                                (10, "10 seconds"),
+                                (15, "15 seconds"),
+                            ] {
+                                if popover_check_item(
+                                    ui,
+                                    lbl,
+                                    None,
+                                    state.snapshot.config.clip_post_buffer_secs == secs,
+                                    accent,
+                                ) {
+                                    state.snapshot.config.clip_post_buffer_secs = secs;
                                     state.push_config_update(now_secs);
                                     state.active_popup = ActivePopup::None;
                                 }
@@ -4878,28 +5213,93 @@ fn modal_action_pill_ex(
     } else {
         fill
     };
-    let paint_rect = if fill == Color32::WHITE {
-        rect.shrink2(Vec2::new(0.0, 1.5))
-    } else {
-        rect
-    };
-    ui.painter().rect_filled(paint_rect, Rounding::same(8.0), draw_fill);
-    if stroke.a() > 0 {
-        ui.painter()
-            .rect_stroke(paint_rect, Rounding::same(8.0), Stroke::new(1.0_f32, stroke));
-    }
     let ic_rect = Rect::from_center_size(
         Pos2::new(rect.left() + 17.0, rect.center().y),
         Vec2::splat(13.0),
     );
-    paint_icon(ui.painter(), ic_rect, icon, icon_col);
-    ui.painter().text(
-        Pos2::new(ic_rect.right() + 7.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        label,
-        FontId::proportional(12.0),
-        fg,
-    );
+    let draw_pill = |painter: &egui::Painter, p_fill: Color32, p_stroke: Color32, p_fg: Color32, p_ic: Color32| {
+        let p_rect = if p_fill == Color32::WHITE {
+            rect.shrink2(Vec2::new(0.0, 1.5))
+        } else {
+            rect
+        };
+        painter.rect_filled(p_rect, Rounding::same(8.0), p_fill);
+        if p_stroke.a() > 0 {
+            painter.rect_stroke(p_rect, Rounding::same(8.0), Stroke::new(1.0_f32, p_stroke));
+        }
+        paint_icon(painter, ic_rect, icon, p_ic);
+        painter.text(
+            Pos2::new(ic_rect.right() + 7.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            label,
+            FontId::proportional(12.0),
+            p_fg,
+        );
+    };
+    if let Some((origin, radius, old_ac, new_ac)) = THEME_SWEEP.with(|c| c.get()) {
+        let (p_old_fill, p_new_fill, p_old_st, p_new_st, p_old_fg, p_new_fg) = if fill == new_ac {
+            let old_fg = contrasting_fg(old_ac);
+            let new_fg = contrasting_fg(new_ac);
+            (old_ac, new_ac, old_ac, new_ac, old_fg, new_fg)
+        } else if fill == pill_bg() {
+            (
+                draw_fill,
+                if enabled && resp.hovered() { ui_pal_new().card_hover } else { ui_pal_new().pill_bg },
+                stroke,
+                if stroke.a() > 0 { ui_pal_new().border } else { stroke },
+                fg,
+                fg,
+            )
+        } else {
+            (draw_fill, draw_fill, stroke, stroke, fg, fg)
+        };
+        if p_old_fill != p_new_fill {
+            let p_old_ic = if fill == new_ac { p_old_fg } else { icon_col };
+            let p_new_ic = if fill == new_ac { p_new_fg } else { icon_col };
+            let p = ui.painter().with_clip_rect(rect);
+            for s in build_swept_panel_shapes(rect, p_old_fill, p_new_fill, 8.0) {
+                p.add(s);
+            }
+            if p_old_st.a() > 0 || p_new_st.a() > 0 {
+                let st_col = if p_old_st == p_new_st {
+                    p_old_st
+                } else {
+                    let dist = rect.center().distance(origin);
+                    let blend = ((radius - dist) * 0.5).clamp(0.0, 1.0);
+                    lerp_color(p_old_st, p_new_st, blend)
+                };
+                if st_col.a() > 0 {
+                    ui.painter().rect_stroke(rect, Rounding::same(8.0), Stroke::new(1.0_f32, st_col));
+                }
+            }
+            let ic_col = if p_old_ic == p_new_ic {
+                p_old_ic
+            } else {
+                let dist = ic_rect.center().distance(origin);
+                let blend = ((radius - dist) * 0.5).clamp(0.0, 1.0);
+                lerp_color(p_old_ic, p_new_ic, blend)
+            };
+            let fg_col = if p_old_fg == p_new_fg {
+                p_old_fg
+            } else {
+                let dist = rect.center().distance(origin);
+                let blend = ((radius - dist) * 0.5).clamp(0.0, 1.0);
+                lerp_color(p_old_fg, p_new_fg, blend)
+            };
+            paint_icon(ui.painter(), ic_rect, icon, ic_col);
+            ui.painter().text(
+                Pos2::new(ic_rect.right() + 7.0, rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                label,
+                FontId::proportional(12.0),
+                fg_col,
+            );
+        } else {
+            draw_pill(ui.painter(), draw_fill, stroke, fg, icon_col);
+        }
+    } else {
+        draw_pill(ui.painter(), draw_fill, stroke, fg, icon_col);
+    }
     if enabled {
         resp.on_hover_cursor(CursorIcon::PointingHand).clicked()
     } else {
@@ -5031,7 +5431,9 @@ fn render_undo_or_status_toast(ctx: &egui::Context, state: &mut RewindUiState, n
             now_secs,
             0.22,
         );
-        (-22.0 + (1.0 - toast_t) * 28.0, toast_t)
+        let y_pos = -22.0 + (1.0 - toast_t) * 28.0;
+        ctx.data_mut(|d| d.insert_temp(spring_id, (y_pos, 0.0_f32)));
+        (y_pos, toast_t)
     };
 
     egui::Area::new(Id::new("status_toast"))
@@ -5040,19 +5442,38 @@ fn render_undo_or_status_toast(ctx: &egui::Context, state: &mut RewindUiState, n
         .anchor(egui::Align2::CENTER_BOTTOM, Vec2::new(0.0, y_offset))
         .show(ctx, |ui| {
             ui.set_opacity(alpha.clamp(0.0, 1.0));
-            egui::Frame::none()
-                .fill(popover_bg())
-                .stroke(Stroke::new(1.0_f32, accent.color()))
+            let toast_bg_idx = ui.painter().add(Shape::Noop);
+            let toast_ac = sweep_color(
+                Pos2::new(ctx.screen_rect().center().x, ctx.screen_rect().bottom() + y_offset - 18.0),
+                accent.color(),
+            );
+            let toast_frame = egui::Frame::none()
+                .fill(Color32::TRANSPARENT)
+                .stroke(Stroke::new(1.0_f32, toast_ac))
                 .rounding(Rounding::same(8.0))
                 .inner_margin(Margin::symmetric(14.0, 8.0))
                 .show(ui, |ui| {
                     ui.vertical(|ui| {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new(msg).size(12.0).color(TEXT_PRIMARY));
-                            if let Some(id) = undo_id {
+                            if enc_pct.is_some() {
+                                ui.add_space(10.0);
+                                let cancel_btn = ui.add(
+                                    egui::Button::new(
+                                        RichText::new("Cancel").size(12.0).color(toast_ac),
+                                    )
+                                    .frame(false),
+                                );
+                                if cancel_btn
+                                    .on_hover_cursor(CursorIcon::PointingHand)
+                                    .clicked()
+                                {
+                                    state.cancel_discord_encode(now_secs);
+                                }
+                            } else if let Some(id) = undo_id {
                                 ui.add_space(10.0);
                                 if ui
-                                    .button(RichText::new("Undo").size(12.0).color(accent.color()))
+                                    .button(RichText::new("Undo").size(12.0).color(toast_ac))
                                     .clicked()
                                 {
                                     state.send_sync(IpcRequest::UndoDelete { id }, now_secs);
@@ -5068,10 +5489,16 @@ fn render_undo_or_status_toast(ctx: &egui::Context, state: &mut RewindUiState, n
                             let fill_r =
                                 Rect::from_min_size(bar_r.left_top(), Vec2::new(fill_w, 4.0));
                             ui.painter()
-                                .rect_filled(fill_r, Rounding::same(2.0), accent.color());
+                                .rect_filled(fill_r, Rounding::same(2.0), toast_ac);
                         }
                     });
                 });
+            let tf_rect = toast_frame.response.rect;
+            let tf_shapes =
+                build_swept_panel_shapes(tf_rect, popover_bg(), ui_pal_new().popover_bg, 8.0);
+            ui.painter()
+                .with_clip_rect(tf_rect)
+                .set(toast_bg_idx, Shape::Vec(tf_shapes));
         });
 }
 
@@ -5094,13 +5521,13 @@ fn split_clip_pill(
     let main_resp = ui.interact(main_r, Id::new("split_save_btn"), Sense::click());
     let chev_resp = ui.interact(chev_r, Id::new("split_len_btn"), Sense::click());
 
-    let base_bg = if popup_open || main_resp.hovered() || chev_resp.hovered() {
-        card_hover()
-    } else {
-        pill_bg()
-    };
+    let hovered = popup_open || main_resp.hovered() || chev_resp.hovered();
+    let base_bg = if hovered { card_hover() } else { pill_bg() };
+    let new_pal = ui_pal_new();
+    let new_base_bg = if hovered { new_pal.card_hover } else { new_pal.pill_bg };
     let base_border = if popup_open { border_bright() } else { border_col() };
     let bg = lerp_color(base_bg, accent_color, flash_alpha * 0.28);
+    let new_bg = lerp_color(new_base_bg, accent_color, flash_alpha * 0.28);
     let border = lerp_color(base_border, accent_color, flash_alpha * 0.92);
 
     if flash_alpha > 0.01 {
@@ -5118,9 +5545,7 @@ fn split_clip_pill(
             ),
         );
     }
-    ui.painter().rect_filled(rect, Rounding::same(7.0), bg);
-    ui.painter()
-        .rect_stroke(rect, Rounding::same(7.0), Stroke::new(1.0_f32, border));
+    paint_swept_rounded_rect(ui.painter(), rect, 7.0, bg, new_bg, Stroke::new(1.0_f32, border));
     ui.painter().line_segment(
         [
             Pos2::new(chev_r.left(), rect.top() + 5.0),
@@ -5184,16 +5609,7 @@ fn dropdown_pill(
     let w = (text_w + keycap_w + dot_w + 34.0).max(min_w);
 
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 28.0), Sense::click());
-    let bg = if active || resp.hovered() {
-        card_hover()
-    } else {
-        pill_bg()
-    };
-    let border = if active { border_bright() } else { border_col() };
-
-    ui.painter().rect_filled(rect, Rounding::same(7.0), bg);
-    ui.painter()
-        .rect_stroke(rect, Rounding::same(7.0), Stroke::new(1.0_f32, border));
+    paint_swept_pill_box(ui.painter(), rect, 7.0, active || resp.hovered(), active);
 
     let mut x = rect.left() + 10.0;
     if let Some(dot) = dot_color {
@@ -5244,13 +5660,14 @@ fn window_ctrl_button(ui: &mut Ui, icon: UiIcon, is_close: bool) -> Response {
 
 fn avatar_button(ui: &mut Ui, initials: &str, active: bool, accent: ThemeAccent) -> Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::click());
+    let av_ac = sweep_color(rect.center(), accent.color());
     let fill = if active || resp.hovered() {
-        accent.soft_bg()
+        Color32::from_rgba_unmultiplied(av_ac.r(), av_ac.g(), av_ac.b(), 36)
     } else {
         Color32::from_rgb(24, 34, 52)
     };
     let border = if active {
-        accent.color()
+        av_ac
     } else {
         Color32::from_rgb(48, 66, 98)
     };
@@ -5262,7 +5679,7 @@ fn avatar_button(ui: &mut Ui, initials: &str, active: bool, accent: ThemeAccent)
         egui::Align2::CENTER_CENTER,
         initials,
         FontId::proportional(10.5),
-        accent.color(),
+        av_ac,
     );
     resp.on_hover_cursor(CursorIcon::PointingHand)
 }
@@ -5280,8 +5697,11 @@ fn settings_section_header(ui: &mut Ui, title: &str, right_hint: Option<&str>) {
 }
 
 fn settings_card(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui)) {
-    egui::Frame::none()
-        .fill(card_bg())
+    let old_bg = card_bg();
+    let new_bg = ui_pal_new().card_bg;
+    let bg_idx = ui.painter().add(Shape::Noop);
+    let resp = egui::Frame::none()
+        .fill(Color32::TRANSPARENT)
         .stroke(Stroke::new(1.0_f32, border_col()))
         .rounding(Rounding::same(7.0))
         .inner_margin(Margin::symmetric(16.0, 12.0))
@@ -5289,6 +5709,9 @@ fn settings_card(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui)) {
             ui.set_width(ui.available_width());
             add_contents(ui);
         });
+    let card_rect = resp.response.rect;
+    let shapes = build_swept_panel_shapes(card_rect, old_bg, new_bg, 7.0);
+    ui.painter().with_clip_rect(card_rect).set(bg_idx, Shape::Vec(shapes));
 }
 
 fn settings_divider(ui: &mut Ui) {
@@ -5313,7 +5736,12 @@ fn settings_row(
         let (icon_box, _) = ui.allocate_exact_size(Vec2::splat(32.0), Sense::hover());
         ui.painter()
             .rect_filled(icon_box, Rounding::same(8.0), icon_box_bg());
-        paint_icon(ui.painter(), icon_box.shrink(8.0), icon, icon_color);
+        paint_icon(
+            ui.painter(),
+            icon_box.shrink(8.0),
+            icon,
+            sweep_color(icon_box.center(), icon_color),
+        );
 
         ui.add_space(8.0);
         ui.vertical(|ui| {
@@ -5399,18 +5827,16 @@ fn hotkey_row(
 fn toggle_switch(ui: &mut Ui, id_salt: &str, on: &mut bool, accent: Color32) -> bool {
     ui.push_id(id_salt, |ui| {
         let (rect, resp) = ui.allocate_exact_size(Vec2::new(38.0, 20.0), Sense::click());
-        let bg = if *on { accent } else { track_bg() };
+        let anim_t = ui
+            .ctx()
+            .animate_bool_with_time(Id::new(("toggle_anim", id_salt)), *on, 0.14);
+        let local_ac = sweep_color(rect.center(), accent);
+        let bg = lerp_color(track_bg(), local_ac, anim_t);
         ui.painter().rect_filled(rect, Rounding::same(10.0), bg);
-        let knob_x = if *on {
-            rect.right() - 10.0
-        } else {
-            rect.left() + 10.0
-        };
-        let knob_col = if *on {
-            contrasting_fg(accent)
-        } else {
-            Color32::WHITE
-        };
+        let x0 = rect.left() + 10.0;
+        let x1 = rect.right() - 10.0;
+        let knob_x = x0 + (x1 - x0) * anim_t;
+        let knob_col = lerp_color(Color32::WHITE, contrasting_fg(local_ac), anim_t);
         ui.painter()
             .circle_filled(Pos2::new(knob_x, rect.center().y), 7.5, knob_col);
         if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
@@ -5475,11 +5901,32 @@ fn custom_slider_ex(
         );
         let thumb_r = thumb_base_r + active_scale * 1.2;
 
+        let local_ac = sweep_color(Pos2::new(thumb_x, rect.center().y), accent);
         ui.painter()
             .rect_filled(track_r, Rounding::same(track_half_h), track_bg());
         let active_r = Rect::from_min_max(track_r.left_top(), Pos2::new(thumb_x, track_r.bottom()));
-        ui.painter()
-            .rect_filled(active_r, Rounding::same(track_half_h), accent);
+        if let Some((origin, radius, old_ac, new_ac)) = THEME_SWEEP.with(|c| c.get()).filter(|(_, _, _, na)| *na == accent) {
+            ui.painter()
+                .rect_filled(active_r, Rounding::same(track_half_h), old_ac);
+            let dy = (rect.center().y - origin.y).abs();
+            if dy < radius {
+                let dx = (radius * radius - dy * dy).sqrt();
+                let ix0 = (origin.x - dx).max(active_r.left());
+                let ix1 = (origin.x + dx).min(active_r.right());
+                if ix1 > ix0 {
+                    let clip_in = Rect::from_min_max(
+                        Pos2::new(ix0, active_r.top() - 1.0),
+                        Pos2::new(ix1, active_r.bottom() + 1.0),
+                    );
+                    ui.painter()
+                        .with_clip_rect(clip_in)
+                        .rect_filled(active_r, Rounding::same(track_half_h), new_ac);
+                }
+            }
+        } else {
+            ui.painter()
+                .rect_filled(active_r, Rounding::same(track_half_h), local_ac);
+        }
 
         if thumb_r > 0.5 {
             ui.painter()
@@ -5487,7 +5934,7 @@ fn custom_slider_ex(
             ui.painter().circle_stroke(
                 Pos2::new(thumb_x, rect.center().y),
                 thumb_r,
-                Stroke::new((thumb_base_r * 0.34).max(1.4), accent),
+                Stroke::new((thumb_base_r * 0.34).max(1.4), local_ac),
             );
         }
 

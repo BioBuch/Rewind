@@ -79,8 +79,8 @@ jobs:
           if ($notes.Length -gt 3800) { $notes = $notes.Substring(0, 3800) + "`n..." }
           $payload = @{
             username = "Rewind Updates"
-            content = "@everyone **Rewind $tag is out!**"
-            allowed_mentions = @{ parse = @("everyone") }
+            content = "<@&1576009034870296706> **Rewind $tag is out!**"
+            allowed_mentions = @{ roles = @("1576009034870296706") }
             embeds = @(@{
               title = "Rewind $tag"
               url = "https://github.com/BioBuch/Rewind/releases/tag/$tag"

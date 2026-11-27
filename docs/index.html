@@ -200,10 +200,10 @@
               <span class="w-8 h-8 rounded-lg bg-zinc-800/80 border border-zinc-700/60 flex items-center justify-center text-zinc-200">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
               </span>
-              <span class="badge badge-sm bg-zinc-800 border-zinc-700 text-zinc-300">Any GPU</span>
+              <span class="badge badge-sm bg-zinc-800 border-zinc-700 text-zinc-300">Zero-Copy GPU</span>
             </div>
             <h3 class="font-semibold text-zinc-100">NVENC, AMF &amp; QuickSync</h3>
-            <p class="text-sm text-zinc-400 leading-relaxed">Hardware-encodes HEVC, AV1, or H.264 up to 4K 120fps in MP4 or MKV with CQP quality or CBR bitrate control.</p>
+            <p class="text-sm text-zinc-400 leading-relaxed">Zero-copy D3D11 GPU-to-encoder pipeline (WGC + DXGI with auto alt-tab recovery) encodes HEVC, AV1, or H.264 up to 4K 120fps in MP4 or MKV.</p>
           </div>
         </div>
 
@@ -268,10 +268,10 @@
               <span class="w-8 h-8 rounded-lg bg-zinc-800/80 border border-zinc-700/60 flex items-center justify-center text-zinc-200">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
               </span>
-              <span class="badge badge-sm bg-zinc-800 border-zinc-700 text-zinc-300">WASAPI</span>
+              <span class="badge badge-sm bg-zinc-800 border-zinc-700 text-zinc-300">Multi-Track</span>
             </div>
-            <h3 class="font-semibold text-zinc-100">Synced Game &amp; Mic Tracks</h3>
-            <p class="text-sm text-zinc-400 leading-relaxed">Pick specific output and mic devices, adjust independent volumes, mute mic with <code class="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-200 text-xs">Ctrl+M</code>, or save separate audio tracks.</p>
+            <h3 class="font-semibold text-zinc-100">Multi-Track Audio Splitting</h3>
+            <p class="text-sm text-zinc-400 leading-relaxed">Pick specific output and mic devices, adjust independent volumes, mute mic with <code class="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-200 text-xs">Ctrl+M</code>, and save separate Game + Mic tracks in MP4/MKV.</p>
           </div>
         </div>
 
@@ -481,6 +481,20 @@
               <td class="text-emerald-400 font-medium">Yes (64–768 MB)</td>
               <td class="text-zinc-400">Disk writes</td>
               <td class="text-zinc-400">Disk writes</td>
+              <td class="text-emerald-400 font-medium">Yes</td>
+            </tr>
+            <tr class="hover:bg-zinc-800/25 border-zinc-800/80">
+              <td class="font-medium text-zinc-200">Zero-Copy GPU Capture Pipeline</td>
+              <td class="text-emerald-400 font-medium">D3D11 → NVENC/AMF/QSV</td>
+              <td class="text-zinc-400">Yes</td>
+              <td class="text-emerald-400 font-medium">Yes</td>
+              <td class="text-emerald-400 font-medium">Yes</td>
+            </tr>
+            <tr class="hover:bg-zinc-800/25 border-zinc-800/80">
+              <td class="font-medium text-zinc-200">Multi-Track Audio (Game + Mic)</td>
+              <td class="text-emerald-400 font-medium">Separate tracks</td>
+              <td class="text-zinc-400">Limited</td>
+              <td class="text-emerald-400 font-medium">Yes</td>
               <td class="text-emerald-400 font-medium">Yes</td>
             </tr>
             <tr class="hover:bg-zinc-800/25 border-zinc-800/80">

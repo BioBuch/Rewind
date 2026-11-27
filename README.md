@@ -48,13 +48,13 @@ OBS Studio                     ████████████████�
 
 ### Capture & Performance
 - **Zero-Lag RAM Ring Buffer** — Keeps the last `15s`–`5m` in system RAM (`64–768 MB` budget) so your SSD isn't constantly worn down by temp writes.
-- **Any-GPU Hardware Encoding** — Works on **NVIDIA (`NVENC`)**, **AMD (`AMF`)**, and **Intel (`QuickSync`)** via Windows Media Foundation, supporting `HEVC`, hardware `AV1`, and `H.264` up to `4K 120fps` in `.mp4` or `.mkv` (`CQP` or `CBR`).
+- **Zero-Copy GPU Capture & Encoding** — Captures via **Windows Graphics Capture (`WGC`)** and **DXGI Desktop Duplication** with automatic alt-tab/display recovery, keeping frames on the GPU (`D3D11` → `Media Foundation`, zero CPU readback) for **NVIDIA (`NVENC`)**, **AMD (`AMF`)**, and **Intel (`QuickSync`)** in `HEVC`, `AV1`, or `H.264` up to `4K 120fps`.
 - **GPU CAS Sharpening** — Optional Direct3D 11 Contrast-Adaptive Sharpening compute shader (`Light` / `Medium`) applied directly on the GPU before encoding.
 - **Post-Clip Reaction Buffer** — Add `+5s`, `+10s`, or `+15s` after pressing your save hotkey so you never cut off your friends' reactions.
 - **Hook-Free Game Detection** — Detects active games via foreground window titles and classes (`SetWinEventHook`) only. Never opens game process handles, reads memory, or injects overlay DLLs. Supports custom/ignored game lists and manual `Desktop` capture.
 
 ### Audio, Editing & Sharing
-- **Synced Game & Mic Audio** — Captures WASAPI system loopback and microphone in lockstep with device selection, independent volume sliders, a global mic-mute hotkey (`Ctrl+M`), and optional **separate audio tracks** for editing.
+- **Multi-Track Audio Splitting (Game + Mic)** — Captures WASAPI system loopback and microphone in lockstep with per-device selection, independent volume sliders, global mic-mute hotkey (`Ctrl+M`), and **separate Game + Mic audio tracks** in `.mp4`/`.mkv` for editing.
 - **1-Click Discord `< 10 MB` Export** — Automatically calculates bitrate, resolution, and framerate to compress any clip (or trimmed range) strictly under Discord's `10 MB` free upload limit.
 - **Lossless Quick Trim & `9:16` Vertical** — Hardware-decoded clip player with frame scrubbing, instant lossless IDR-keyframe MP4 trimming (non-blocking so live replay keeps recording), and a `9:16` vertical export option.
 
@@ -69,6 +69,8 @@ OBS Studio                     ████████████████�
 | :--- | :---: | :---: | :---: | :---: |
 | **100% Local, Free & Open Source** | ✅ GPL-3.0 | ❌ Ads / Paywalls | ❌ Proprietary | ✅ GPL-2.0 |
 | **Any GPU (`NVENC` / `AMF` / `QSV`)** | ✅ | ✅ | ❌ Vendor-locked | ✅ |
+| **Zero-Copy GPU Capture Pipeline** | ✅ `D3D11` → `MFT` | ⚠️ | ✅ | ✅ |
+| **Multi-Track Audio (Game + Mic)** | ✅ Separate tracks | ⚠️ | ✅ | ✅ |
 | **No Electron / Overwolf Bloat** | ✅ Native Rust | ❌ | ✅ | ✅ |
 | **RAM Ring Buffer (SSD-friendly)** | ✅ | ❌ Disk | ❌ Disk | ✅ |
 | **1-Click Discord `< 10 MB` Export** | ✅ | ❌ Paid / Cloud | ❌ | ❌ |
